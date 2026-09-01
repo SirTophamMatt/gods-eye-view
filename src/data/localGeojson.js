@@ -90,6 +90,18 @@ export function localInfrastructureOverlayCopy(properties, layerId) {
     if (river && river.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
       details.push(clampCardLine(river));
     }
+  } else if (layerId.startsWith('local-pm-')) {
+    // Passive Monitor exports a normalized (status, detail) pair on every
+    // hazard, so one branch serves fire, flood, storm and power alike. `status`
+    // is the operational state ("Watch and Act", "Minor"); `detail` is the
+    // measurement context ("296 ha · 12 resources"). Both are pre-composed by
+    // scripts/export-passive-monitor.mjs, and either may be absent.
+    const status = firstClean([props.status]);
+    if (status && status.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
+      details.push(clampCardLine(status));
+    }
+    const detail = firstClean([props.detail]);
+    if (detail) details.push(clampCardLine(detail));
   }
 
   return { title, details };

@@ -283,6 +283,14 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   Object.freeze({ id: 'local-dams', token: 'q', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-datacenters', token: 'd', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-firms', token: 'w', disposition: 'enabled-only' }),
+  // Passive Monitor hazard snapshots. Every layer the manager registers must
+  // appear here — finalizeRegistrations() demands an exact bijection and throws
+  // at boot otherwise — so these are registered even though they hold no
+  // options of their own.
+  Object.freeze({ id: 'local-pm-fire', token: 'h', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-flood', token: 'j', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-power', token: 'k', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-storm', token: 'n', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military', token: 'm', disposition: 'enabled+mirrored-options', optionOwner: 'flights' }),
   Object.freeze({ id: 'military-awareness', token: 'g', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military-installations', token: 'i', disposition: 'enabled-only' }),

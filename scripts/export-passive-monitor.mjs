@@ -171,30 +171,31 @@ const WARNING_BUCKETS = [
 ];
 
 /**
- * Is this a Bureau of Meteorology product?
+ * Is this a Bureau product with NO escalation level — a district weather
+ * warning rather than a declared VicEmergency warning?
  *
- * The feed carries the issuing domain in a DIFFERENT column depending on the
- * record type, which is easy to get wrong:
+ * Only ever asked of `feed_type='incident'` records, which is what makes the
+ * answer meaningful. The feed records the issuing domain in a different column
+ * per record type:
  *
  *   feed_type='warning'   category1 = escalation level ('Advice')
  *                         category2 = domain ('Met' | 'Fire')
  *   feed_type='incident'  category1 = domain or type ('Met' | 'Fire' |
  *                         'Planned Burn' | 'Tree Down' | ...)
  *
- * So BoM products arrive BOTH ways: riverine flood warnings as feed_type
- * 'warning' with category2='Met', and district wind/severe-weather warnings as
- * feed_type 'incident' with category1='Met'. Checking only category2 left the
- * wind warnings sitting in the Incidents layer — visibly wrong, since a
- * Damaging Wind warning covering six districts is not an incident.
+ * So a Bureau riverine flood warning arrives as a 'warning' WITH a level, and
+ * belongs on the escalation ladder like any other declared warning. A Bureau
+ * wind or severe-weather warning arrives as an 'incident' with NO level, and is
+ * neither a ladder warning nor an operational incident — that is the record
+ * this identifies.
  *
- * Checking both columns catches every Met record regardless of how the feed
- * classified it. These are the spatial half of the same BoM products the
- * `weather_warnings` table holds as district-level TEXT; unlike that table they
- * carry real warning-area polygons, which is why they are drawn from here.
+ * Both columns are folded because the caller only reaches here for incidents,
+ * where category1 carries the domain; checking category2 as well costs nothing
+ * and survives the feed moving it.
  */
-function isBureauWarning(row) {
-  return clean(row.category2).toLowerCase() === 'met'
-    || clean(row.category1).toLowerCase() === 'met';
+function isBureauWeatherProduct(row) {
+  return clean(row.category1).toLowerCase() === 'met'
+    || clean(row.category2).toLowerCase() === 'met';
 }
 
 /**
@@ -249,16 +250,14 @@ function exportVicEmergency(db, includeResolved) {
     let bucket;
     let severity;
     let hazard;
-    // Tested BEFORE feed_type, because a Bureau product can arrive as either a
-    // 'warning' or an 'incident' and belongs in the weather layer either way.
-    if (isBureauWarning(row)) {
-      const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
-      // Severity still comes from the escalation level when the feed gives
-      // one; district weather warnings carry none, so they sit at 'notable'.
-      severity = matched ? matched.severity : 1;
-      bucket = 'weather';
-      hazard = 'weather-warning';
-    } else if (feedType === 'warning') {
+    // The split is by ESCALATION LEVEL, not by issuing agency.
+    //
+    // A feed_type='warning' record carries a level, so it belongs on the ladder
+    // whoever issued it — a riverine flood Advice is an Advice, and burying it
+    // in a weather layer hides it from the level it was actually declared at.
+    // Only the Bureau products that carry NO level (district wind and severe
+    // weather, which arrive as incidents) become their own weather layer.
+    if (feedType === 'warning') {
       const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
       severity = matched ? matched.severity : 1;
       bucket = matched ? matched.key : fallbackWarningBucket;
@@ -267,6 +266,13 @@ function exportVicEmergency(db, includeResolved) {
       bucket = 'burn';
       severity = 0;
       hazard = 'burn-area';
+    } else if (isBureauWeatherProduct(row)) {
+      // An 'incident' from the Bureau is a district weather warning, not an
+      // operational incident: a Damaging Wind warning over six forecast
+      // districts is not the same kind of thing as a tree down.
+      bucket = 'weather';
+      severity = 1;
+      hazard = 'weather-warning';
     } else {
       bucket = 'incident';
       // Incidents carry no level. A live fire outranks a tree down.

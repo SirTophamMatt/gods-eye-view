@@ -440,10 +440,45 @@ export function createLocalGeoJsonLayer({
             throw new Error(`HTTP ${response.status ?? '?'}`);
           }
           const text = await response.text();
-          const lines = text.split('\n').filter(l => l.trim().length > 0);
-          
-          const features = lines.map(line => JSON.parse(line));
-          
+          // Two wire formats, because a layer's `url` can point at either a
+          // bundled .geojsonl snapshot or a live API:
+          //
+          //   JSON Lines        one Feature per line — what the committed
+          //                     snapshots use, and what this loader has always
+          //                     read.
+          //   FeatureCollection a single JSON object — what a conventional
+          //                     GeoJSON endpoint serves.
+          //
+          // Sniffing the body rather than configuring the format per layer is
+          // what lets a live source be swapped in by changing ONLY the URL.
+          // A FeatureCollection is detected structurally, not by Content-Type,
+          // so a proxy that rewrites headers cannot break the parse.
+          // NOT sniffed by first character: JSON Lines also begins with '{',
+          // so a leading-brace test sends every snapshot down the single-
+          // document path and dies parsing line two. Instead try the whole body
+          // as ONE document and accept it only if it is actually a collection;
+          // anything else — including a parse failure, which is the normal
+          // outcome for multi-line JSONL — falls through to line-by-line.
+          const trimmed = text.trim();
+          let features = null;
+          try {
+            const parsed = JSON.parse(trimmed);
+            if (parsed && Array.isArray(parsed.features)) {
+              features = parsed.features;      // FeatureCollection (live API)
+            } else if (Array.isArray(parsed)) {
+              features = parsed;               // bare Feature array
+            }
+            // A lone Feature object falls through: it is a one-line JSONL file.
+          } catch {
+            // Not a single JSON document. Expected for JSONL — not an error.
+          }
+          if (!features) {
+            features = trimmed
+              .split('\n')
+              .filter((l) => l.trim().length > 0)
+              .map((line) => JSON.parse(line));
+          }
+
           const geojson = {
             type: 'FeatureCollection',
             features

@@ -31,6 +31,14 @@ services:
       OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
       OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
 
+      # Passive Monitor live hazard layers. Leave unset to serve the committed
+      # snapshots instead. Neither value reaches the browser — the proxy brokers
+      # them server-side, so the client never learns the instance URL or its
+      # credentials. If Passive Monitor runs on this same host, prefer its
+      # internal Docker address over the public hostname.
+      PASSIVE_MONITOR_URL: ${PASSIVE_MONITOR_URL:-}
+      PASSIVE_MONITOR_BASIC_AUTH: ${PASSIVE_MONITOR_BASIC_AUTH:-}
+
       # Per-IP throttles. These are app-level guards, NOT billing caps — set
       # spend limits at each provider as well.
       GEV_RATELIMIT_OPENAI_PER_MIN: ${GEV_RATELIMIT_OPENAI_PER_MIN:-6}

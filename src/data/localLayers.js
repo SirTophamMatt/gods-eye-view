@@ -6,15 +6,29 @@ import submarineCablesLayer from './telegeographySubmarineCables.js';
 import datacentersUrl from './local_data/datacenters/datacenters.geojsonl?url';
 import damsUrl from './local_data/dams/dams.geojsonl?url';
 
-// Passive Monitor — Victorian emergency state, exported from the Passive
-// Monitor SQLite database by scripts/export-passive-monitor.mjs. These are
-// snapshots, not live feeds; regenerate them by re-running that script.
+// Passive Monitor — Victorian emergency state.
+//
+// Each layer has two possible sources, chosen at build time by whether a
+// Passive Monitor instance is configured:
+//
+//   live      /api/passive-monitor/geojson/<id>, brokered by the Vite proxy to
+//             that instance's read-only /api/intel endpoints. Set
+//             PASSIVE_MONITOR_URL to enable.
+//   snapshot  the committed .geojsonl below, produced by
+//             scripts/export-passive-monitor.mjs.
+//
+// Both emit an IDENTICAL property contract — verified feature-for-feature
+// across the whole dataset — which is what makes the source a URL swap and
+// nothing more. Keep it that way: if you change a field in one, change it in
+// the other (app/api_intel.py in the Passive Monitor repo).
 import pmWarnEmergencyUrl from './local_data/passive-monitor/pm-warn-emergency.geojsonl?url';
 import pmWarnWatchUrl from './local_data/passive-monitor/pm-warn-watch.geojsonl?url';
 import pmWarnAdviceUrl from './local_data/passive-monitor/pm-warn-advice.geojsonl?url';
 import pmWarnCommunityUrl from './local_data/passive-monitor/pm-warn-community.geojsonl?url';
+import pmFloodWarningUrl from './local_data/passive-monitor/pm-flood-warning.geojsonl?url';
 import pmIncidentUrl from './local_data/passive-monitor/pm-incident.geojsonl?url';
 import pmBurnUrl from './local_data/passive-monitor/pm-burn.geojsonl?url';
+import pmRoadsUrl from './local_data/passive-monitor/pm-roads.geojsonl?url';
 import pmFloodUrl from './local_data/passive-monitor/pm-flood.geojsonl?url';
 import pmStormUrl from './local_data/passive-monitor/pm-storm.geojsonl?url';
 import pmPowerUrl from './local_data/passive-monitor/pm-power.geojsonl?url';
@@ -58,6 +72,28 @@ const fires = createFirmsHeatmapLayer({
 });
 
 /**
+ * Resolve one Passive Monitor layer's data source.
+ *
+ * `import.meta.env.PASSIVE_MONITOR_LIVE` is a boolean stamped in by
+ * vite.config.js — true only when PASSIVE_MONITOR_URL resolved to a valid
+ * origin. The URL itself never reaches the bundle, so the browser cannot learn
+ * where the instance lives; it only ever talks to this app's own proxy path.
+ *
+ * @param {string} layerId Passive Monitor layer id, e.g. 'pm-flood-warning'.
+ * @param {string} snapshotUrl Bundled .geojsonl fallback.
+ * @returns {string} The URL the layer should fetch.
+ */
+function passiveMonitorSource(layerId, snapshotUrl) {
+  return import.meta.env.PASSIVE_MONITOR_LIVE
+    ? `/api/passive-monitor/geojson/${layerId}`
+    : snapshotUrl;
+}
+
+/** Whether the PM layers are reading live data — shown in each layer's credit. */
+const PM_LIVE = Boolean(import.meta.env.PASSIVE_MONITOR_LIVE);
+const PM_SOURCE_LABEL = PM_LIVE ? 'Passive Monitor · LIVE' : 'Passive Monitor';
+
+/**
  * Passive Monitor hazard layers.
  *
  * Separate layers rather than one combined feed: the operational question is
@@ -78,11 +114,11 @@ const fires = createFirmsHeatmapLayer({
  */
 const passiveMonitorWarnEmergency = createLocalGeoJsonLayer({
   id: 'local-pm-warn-emergency',
-  url: pmWarnEmergencyUrl,
+  url: passiveMonitorSource('pm-warn-emergency', pmWarnEmergencyUrl),
   name: 'PM Emergency Warnings',
   color: '#d62728', // PM WARNING_STYLE: Emergency Warning
   icon: '★',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
@@ -90,11 +126,11 @@ const passiveMonitorWarnEmergency = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnWatch = createLocalGeoJsonLayer({
   id: 'local-pm-warn-watch',
-  url: pmWarnWatchUrl,
+  url: passiveMonitorSource('pm-warn-watch', pmWarnWatchUrl),
   name: 'PM Watch & Act',
   color: '#ff7f0e', // PM WARNING_STYLE: Watch and Act
   icon: '▲',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
@@ -102,11 +138,11 @@ const passiveMonitorWarnWatch = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnAdvice = createLocalGeoJsonLayer({
   id: 'local-pm-warn-advice',
-  url: pmWarnAdviceUrl,
+  url: passiveMonitorSource('pm-warn-advice', pmWarnAdviceUrl),
   name: 'PM Advice',
   color: '#e6c700', // PM WARNING_STYLE: Advice
   icon: '◆',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
@@ -114,14 +150,38 @@ const passiveMonitorWarnAdvice = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
   id: 'local-pm-warn-community',
-  url: pmWarnCommunityUrl,
+  url: passiveMonitorSource('pm-warn-community', pmWarnCommunityUrl),
   name: 'PM Community Info',
   color: '#9aa0a6', // PM classify() fallback grey — no styled level upstream
   icon: '●',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
+});
+
+/**
+ * Bureau-issued warnings (`category2 = 'Met'`) — riverine flood, severe weather,
+ * thunderstorm — lifted out of the escalation-ladder layers so weather can be
+ * toggled independently of fire.
+ *
+ * This is the SPATIAL half of the BoM products that Passive Monitor also stores
+ * as text in `weather_warnings`. That table is not drawn: 5 of its 12 rows are
+ * whole-district products ("East Gippsland forecast district", "Victoria") with
+ * no point to place, and name-matching the rest to a gauge would pin a
+ * whole-reach warning onto one arbitrary station. These records carry the real
+ * warning-area polygons instead.
+ */
+const passiveMonitorFloodWarning = createLocalGeoJsonLayer({
+  id: 'local-pm-flood-warning',
+  url: passiveMonitorSource('pm-flood-warning', pmFloodWarningUrl),
+  name: 'PM Flood Warnings',
+  color: '#00b7ff',
+  icon: '◇',
+  source: `${PM_SOURCE_LABEL} · BoM`,
+  labels: true,
+  labelMax: 120,
+  labelGridPx: 150,
 });
 
 // Operational events at a point — fire, tree down, rescue, hazmat. These carry
@@ -129,11 +189,11 @@ const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
 // yellow ladder rather than competing with it for the same hues.
 const passiveMonitorIncident = createLocalGeoJsonLayer({
   id: 'local-pm-incident',
-  url: pmIncidentUrl,
+  url: passiveMonitorSource('pm-incident', pmIncidentUrl),
   name: 'PM Incidents',
   color: '#00d1b2',
   icon: '✚',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
@@ -141,23 +201,41 @@ const passiveMonitorIncident = createLocalGeoJsonLayer({
 
 const passiveMonitorBurn = createLocalGeoJsonLayer({
   id: 'local-pm-burn',
-  url: pmBurnUrl,
+  url: passiveMonitorSource('pm-burn', pmBurnUrl),
   name: 'PM Burn Areas',
   color: '#8b5a2b',
   icon: '■',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 80,
   labelGridPx: 150,
 });
 
+/**
+ * VicTraffic road disruptions. EMPTY until Passive Monitor holds a VicRoads
+ * Data Exchange API key (`roads.api_key`) — that collector log-and-skips
+ * without one, so the table has no rows to export. The layer is registered now
+ * so it fills on the next export once the key is set, with no code change.
+ */
+const passiveMonitorRoads = createLocalGeoJsonLayer({
+  id: 'local-pm-roads',
+  url: passiveMonitorSource('pm-roads', pmRoadsUrl),
+  name: 'PM Road Disruptions',
+  color: '#ff6b9d',
+  icon: '⊘',
+  source: `${PM_SOURCE_LABEL} · VicTraffic`,
+  labels: true,
+  labelMax: 110,
+  labelGridPx: 140,
+});
+
 const passiveMonitorFlood = createLocalGeoJsonLayer({
   id: 'local-pm-flood',
-  url: pmFloodUrl,
+  url: passiveMonitorSource('pm-flood', pmFloodUrl),
   name: 'PM Flood Gauges',
   color: '#2ea8ff', // Water blue
   icon: '▼',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   // The gauge network is the densest of the four — 300+ stations clustered over
   // one state — so it gets the widest collision grid to stay readable when the
@@ -168,11 +246,11 @@ const passiveMonitorFlood = createLocalGeoJsonLayer({
 
 const passiveMonitorStorm = createLocalGeoJsonLayer({
   id: 'local-pm-storm',
-  url: pmStormUrl,
+  url: passiveMonitorSource('pm-storm', pmStormUrl),
   name: 'PM Storm Cells',
   color: '#b45cff', // Radar violet
   icon: '◈',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 90,
   labelGridPx: 140,
@@ -180,11 +258,11 @@ const passiveMonitorStorm = createLocalGeoJsonLayer({
 
 const passiveMonitorPower = createLocalGeoJsonLayer({
   id: 'local-pm-power',
-  url: pmPowerUrl,
+  url: passiveMonitorSource('pm-power', pmPowerUrl),
   name: 'PM Power Outages',
   color: '#ffc61a', // Supply yellow
   icon: '◉',
-  source: 'Passive Monitor',
+  source: PM_SOURCE_LABEL,
   labels: true,
   labelMax: 120,
   labelGridPx: 140,
@@ -200,9 +278,11 @@ export default [
   passiveMonitorWarnWatch,
   passiveMonitorWarnAdvice,
   passiveMonitorWarnCommunity,
+  passiveMonitorFloodWarning,
   passiveMonitorIncident,
   passiveMonitorBurn,
   passiveMonitorFlood,
   passiveMonitorStorm,
   passiveMonitorPower,
+  passiveMonitorRoads,
 ];

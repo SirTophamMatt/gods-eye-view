@@ -7323,6 +7323,146 @@ function normalizeAisTimestamp(value) {
   return Number.isNaN(date.getTime()) ? new Date().toISOString() : date.toISOString();
 }
 
+// ---------------------------------------------------------------------------
+// Passive Monitor — live Victorian hazard layers (GeoJSON).
+//
+// Brokers the read-only /api/intel/* endpoints of a Passive Monitor instance
+// (github.com/SirTophamMatt/PassiveMotintor). Server-side rather than fetched
+// straight from the browser for three reasons: the upstream sets no CORS
+// headers, the instance may sit behind HTTP basic auth whose credentials must
+// never reach the client, and the URL differs per environment (a local
+// instance in development, the VPS in production) which would otherwise have
+// to be baked into the bundle.
+//
+//   PASSIVE_MONITOR_URL         base origin, e.g. http://localhost:8050
+//                               or https://monitor.example.com
+//   PASSIVE_MONITOR_BASIC_AUTH  optional "user:password" for an instance
+//                               behind Caddy basicauth
+//
+// Unset PASSIVE_MONITOR_URL is a normal state, not a fault: the layers simply
+// fall back to their committed snapshots.
+// ---------------------------------------------------------------------------
+
+// Layer ids are allowlisted by shape so a request cannot be steered onto an
+// arbitrary upstream path.
+const PASSIVE_MONITOR_LAYER_RE = /^pm-[a-z0-9-]{1,40}$/;
+const PASSIVE_MONITOR_TIMEOUT_MS = 10_000;
+// A hazard layer is tens of KB; this only stops a wrong URL streaming forever.
+const PASSIVE_MONITOR_MAX_BYTES = 12 * 1024 * 1024;
+
+function passiveMonitorBaseUrl() {
+  const raw = String(process.env.PASSIVE_MONITOR_URL || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function passiveMonitorHeaders() {
+  const headers = { Accept: 'application/json' };
+  const credentials = String(process.env.PASSIVE_MONITOR_BASIC_AUTH || '').trim();
+  if (credentials.includes(':')) {
+    headers.Authorization = `Basic ${Buffer.from(credentials, 'utf8').toString('base64')}`;
+  }
+  return headers;
+}
+
+function createPassiveMonitorMiddleware() {
+  const sendJson = (res, status, body) => {
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(body));
+  };
+
+  return async function passiveMonitorProxyMiddleware(req, res) {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { Allow: 'GET', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    const base = passiveMonitorBaseUrl();
+    if (!base) {
+      // 503 rather than 404: the route exists, the instance is just not
+      // configured. The layer treats this as "fall back to the snapshot".
+      sendJson(res, 503, {
+        error: 'not_configured',
+        detail: 'Set PASSIVE_MONITOR_URL to stream live Passive Monitor layers.',
+      });
+      return;
+    }
+
+    const requestUrl = new URL(req.url || '/', 'http://localhost');
+    let upstreamPath = null;
+    if (requestUrl.pathname === '/layers') {
+      upstreamPath = '/api/intel/layers';
+    } else {
+      const match = requestUrl.pathname.match(/^\/geojson\/([a-z0-9-]{1,40})$/i);
+      if (match && PASSIVE_MONITOR_LAYER_RE.test(match[1])) {
+        upstreamPath = `/api/intel/geojson/${match[1]}`;
+      }
+    }
+    if (!upstreamPath) {
+      sendJson(res, 404, { error: 'unknown_route' });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PASSIVE_MONITOR_TIMEOUT_MS);
+    try {
+      const upstream = await fetch(`${base}${upstreamPath}`, {
+        headers: passiveMonitorHeaders(),
+        signal: controller.signal,
+      });
+      if (!upstream.ok) {
+        // Surface the upstream status but not its body: a Caddy auth failure
+        // returns an HTML login page that would land in JSON.parse.
+        sendJson(res, 502, {
+          error: 'upstream_error',
+          status: upstream.status,
+        });
+        return;
+      }
+      const text = await upstream.text();
+      if (text.length > PASSIVE_MONITOR_MAX_BYTES) {
+        sendJson(res, 502, { error: 'upstream_too_large' });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        // Matches the endpoint's own Cache-Control: collectors run on their
+        // own cadence, so polling harder than that just re-runs the queries.
+        'Cache-Control': 'public, max-age=30',
+      });
+      res.end(text);
+    } catch (error) {
+      sendJson(res, 504, {
+        error: error?.name === 'AbortError' ? 'upstream_timeout' : 'upstream_unreachable',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+function passiveMonitorProxy() {
+  const middleware = createPassiveMonitorMiddleware();
+  const install = (server) => {
+    server.middlewares.use('/api/passive-monitor', middleware);
+  };
+  return {
+    name: 'passive-monitor-proxy',
+    configureServer: install,
+    configurePreviewServer: install,
+  };
+}
+
 /**
  * Main Vite configuration factory.
  *
@@ -7360,6 +7500,7 @@ export default defineConfig(({ mode }) => {
       trackBackfillProxies(),
       openAiRealtimeProxy(),
       googlePlacesContextProxy(),
+      passiveMonitorProxy(),
     ],
     server: {
       host: env.HOST || 'localhost',
@@ -7373,6 +7514,13 @@ export default defineConfig(({ mode }) => {
     define: {
       'import.meta.env.GOOGLE_MAPS_API_KEY': JSON.stringify(env.GOOGLE_MAPS_API_KEY),
       'import.meta.env.CESIUM_ION_TOKEN': JSON.stringify(env.CESIUM_ION_TOKEN),
+      // Whether a Passive Monitor instance is configured. Only the BOOLEAN
+      // crosses into the bundle — the URL and any basic-auth credentials stay
+      // server-side in the proxy, so the browser never learns where the
+      // instance lives or how to authenticate to it.
+      'import.meta.env.PASSIVE_MONITOR_LIVE': JSON.stringify(
+        Boolean(passiveMonitorBaseUrl()),
+      ),
     },
     build: {
       // The Cesium engine bundle is inherently large; raise the warning ceiling

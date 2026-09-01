@@ -170,6 +170,21 @@ const WARNING_BUCKETS = [
   { key: 'warn-community', match: (s) => s.includes('community'), severity: 0 },
 ];
 
+/**
+ * `category2` names the issuing domain: 'Met' for the Bureau-driven products
+ * (riverine flood, severe weather, thunderstorm), 'Fire' for the fire-agency
+ * ones. The Met warnings are the spatial half of the same BoM products the
+ * `weather_warnings` table holds as district-level TEXT — and unlike that table
+ * these carry real warning-area polygons, which is why they are drawn from here
+ * and not from there.
+ *
+ * They get their own layer so weather can be toggled independently of fire,
+ * which leaves the escalation-ladder layers holding fire and other warnings.
+ */
+function isBureauWarning(row) {
+  return clean(row.category2).toLowerCase() === 'met';
+}
+
 function exportVicEmergency(db, includeResolved) {
   const where = includeResolved ? '' : 'WHERE resolved = 0';
   const rows = db.prepare(`
@@ -181,6 +196,7 @@ function exportVicEmergency(db, includeResolved) {
   `).all();
 
   const groups = {
+    'warn-flood': [],
     'warn-emergency': [],
     'warn-watch': [],
     'warn-advice': [],
@@ -205,9 +221,16 @@ function exportVicEmergency(db, includeResolved) {
     let hazard;
     if (feedType === 'warning') {
       const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
-      bucket = matched ? matched.key : fallbackWarningBucket;
+      // Severity still comes from the escalation level even for Bureau
+      // warnings — only the layer they land in differs.
       severity = matched ? matched.severity : 1;
-      hazard = 'warning';
+      if (isBureauWarning(row)) {
+        bucket = 'warn-flood';
+        hazard = 'flood-warning';
+      } else {
+        bucket = matched ? matched.key : fallbackWarningBucket;
+        hazard = 'warning';
+      }
     } else if (feedType === 'burn-area') {
       bucket = 'burn';
       severity = 0;
@@ -441,6 +464,93 @@ function exportPower(db, includeResolved) {
   return out;
 }
 
+/**
+ * VicTraffic — VicRoads / Transport Victoria unplanned road disruptions.
+ *
+ * This will export ZERO features until Passive Monitor is actually collecting
+ * them. That feed is the one source in the whole system needing a credential:
+ * `roads.api_key` (sent as the `KeyId` header, from the Data Exchange at
+ * data-exchange.vicroads.vic.gov.au) must be set in Passive Monitor's config
+ * alongside `roads.feed_url`, and until BOTH are present its collector logs and
+ * skips. The path is wired anyway so the layer fills in on the next export with
+ * no code change once that key exists.
+ *
+ * Geometry here is Point or LineString, not Polygon — a disruption is a place
+ * or a stretch of road. So this deliberately does NOT reuse extractPolygons;
+ * it keeps the line geometry, which is the whole point of a road closure.
+ */
+function exportRoads(db, includeResolved) {
+  const where = includeResolved ? '' : 'WHERE resolved = 0';
+  let rows;
+  try {
+    rows = db.prepare(`
+      SELECT source_id, status, disruption_type, is_closure, road_name, location,
+             direction, lanes_affected, lga, description, latitude, longitude,
+             geometry, start_time, end_time, updated, last_seen, resolved
+      FROM road_disruptions
+      ${where}
+    `).all();
+  } catch {
+    // An older Passive Monitor database may predate the table entirely.
+    return [];
+  }
+
+  const out = [];
+  for (const row of rows) {
+    if (!validCoord(row.latitude, row.longitude)) continue;
+
+    const closure = Boolean(row.is_closure);
+    const type = clean(row.disruption_type);
+    let severity = closure ? 2 : 1;
+    if (row.resolved) severity = 0;
+
+    const name = clean(row.road_name) || clean(row.location) || 'Road disruption';
+    const properties = {
+      name,
+      hazard: 'roads',
+      severity,
+      status: closure ? 'Road closed' : (clean(row.status) || type || 'Disruption'),
+      detail: detailLine([
+        type,
+        clean(row.location),
+        clean(row.direction),
+        clean(row.lanes_affected),
+        clean(row.lga),
+      ]),
+      isClosure: closure,
+      resolved: Boolean(row.resolved),
+      ts: clean(row.updated) || clean(row.last_seen) || clean(row.start_time),
+      source: 'Passive Monitor · roads',
+    };
+
+    out.push(feature(point(row.longitude, row.latitude), properties));
+
+    // Keep the LineString: the extent of a closure is the road it covers.
+    const raw = clean(row.geometry);
+    if (raw) {
+      try {
+        const geo = JSON.parse(raw);
+        const geometry = geo?.type === 'Feature' ? geo.geometry : geo;
+        const kind = geometry?.type;
+        if (
+          (kind === 'LineString' || kind === 'MultiLineString'
+            || kind === 'Polygon' || kind === 'MultiPolygon')
+          && Array.isArray(geometry.coordinates)
+          && geometry.coordinates.length
+        ) {
+          out.push(feature(
+            { type: kind, coordinates: geometry.coordinates },
+            { ...properties, name: `${name} (extent)`, isExtent: true },
+          ));
+        }
+      } catch {
+        // A malformed geometry costs this record its extent, nothing more.
+      }
+    }
+  }
+  return out;
+}
+
 function writeLayer(name, features) {
   const file = resolve(OUT_DIR, `${name}.geojsonl`);
   // GeoJSON Lines: one Feature per line, which is what localGeojson.js streams.
@@ -487,11 +597,13 @@ function main() {
   total += writeLayer('pm-warn-watch', vicEmergency['warn-watch']);
   total += writeLayer('pm-warn-advice', vicEmergency['warn-advice']);
   total += writeLayer('pm-warn-community', vicEmergency['warn-community']);
+  total += writeLayer('pm-flood-warning', vicEmergency['warn-flood']);
   total += writeLayer('pm-incident', vicEmergency.incident);
   total += writeLayer('pm-burn', vicEmergency.burn);
   total += writeLayer('pm-flood', exportFloods(db));
   total += writeLayer('pm-storm', exportStorms(db));
   total += writeLayer('pm-power', exportPower(db, includeResolved));
+  total += writeLayer('pm-roads', exportRoads(db, includeResolved));
 
   db.close();
 

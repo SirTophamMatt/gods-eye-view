@@ -135,10 +135,37 @@ git commit -m "Refresh Passive Monitor snapshot"
 git push
 ```
 
-Making this live is the natural next step: add a read-only `/api/intel/geojson`
-endpoint to Passive Monitor that serves the same property contract the exporter
-writes, and point the layers at it instead of the bundled files. Because the
-contract is identical, the layer code does not change.
+## Streaming live from Passive Monitor
+
+The snapshots are the default. To read live instead, point this app at a Passive
+Monitor instance exposing the read-only `/api/intel/*` endpoints:
+
+```bash
+PASSIVE_MONITOR_URL=https://monitor.yourdomain.com
+PASSIVE_MONITOR_BASIC_AUTH=viewer:your-password
+```
+
+Add both to the `.env` beside `docker-compose.yml` and pass them through in the
+compose `environment:` block. The layers then fetch
+`/api/passive-monitor/geojson/<layer>`, which the Vite proxy brokers to that
+instance. **Neither value reaches the browser** — only a boolean does, so the
+client never learns where the instance lives or how to authenticate to it.
+
+Two behaviours worth knowing:
+
+- **There is no automatic fallback to the snapshots.** If the instance is
+  unreachable the layers report an error. Silently serving hours-old hazard data
+  as though it were current is the worse failure.
+- **Both sources emit an identical property contract**, verified feature-for-
+  feature across the whole dataset. Switching source is a URL change and nothing
+  else. The two implementations are `scripts/export-passive-monitor.mjs` here and
+  `app/api_intel.py` in the Passive Monitor repo — if you change a field in one,
+  change it in the other.
+
+If Passive Monitor sits behind its own Caddy basicauth on the same host, prefer
+pointing at it over the internal Docker network (`http://passivemonitor-app-1:8050`)
+rather than back out through the public hostname — that skips the auth round trip
+and keeps the traffic on the box.
 
 ## Troubleshooting
 

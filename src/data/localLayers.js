@@ -25,7 +25,7 @@ import pmWarnEmergencyUrl from './local_data/passive-monitor/pm-warn-emergency.g
 import pmWarnWatchUrl from './local_data/passive-monitor/pm-warn-watch.geojsonl?url';
 import pmWarnAdviceUrl from './local_data/passive-monitor/pm-warn-advice.geojsonl?url';
 import pmWarnCommunityUrl from './local_data/passive-monitor/pm-warn-community.geojsonl?url';
-import pmFloodWarningUrl from './local_data/passive-monitor/pm-flood-warning.geojsonl?url';
+import pmWeatherWarningUrl from './local_data/passive-monitor/pm-weather-warning.geojsonl?url';
 import pmIncidentUrl from './local_data/passive-monitor/pm-incident.geojsonl?url';
 import pmBurnUrl from './local_data/passive-monitor/pm-burn.geojsonl?url';
 import pmRoadsUrl from './local_data/passive-monitor/pm-roads.geojsonl?url';
@@ -161,9 +161,15 @@ const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
 });
 
 /**
- * Bureau-issued warnings (`category2 = 'Met'`) — riverine flood, severe weather,
- * thunderstorm — lifted out of the escalation-ladder layers so weather can be
- * toggled independently of fire.
+ * Bureau-issued warnings — riverine flood, damaging wind, severe weather —
+ * lifted out of BOTH the escalation ladder and the Incidents layer so weather
+ * can be toggled independently of fire.
+ *
+ * Matched on 'Met' in EITHER category column, because the feed classifies these
+ * two different ways: flood warnings arrive as feed_type 'warning' with
+ * category2='Met', while district wind warnings arrive as feed_type 'incident'
+ * with category1='Met'. Checking one column left the wind warnings showing as
+ * incidents.
  *
  * This is the SPATIAL half of the BoM products that Passive Monitor also stores
  * as text in `weather_warnings`. That table is not drawn: 5 of its 12 rows are
@@ -172,10 +178,10 @@ const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
  * whole-reach warning onto one arbitrary station. These records carry the real
  * warning-area polygons instead.
  */
-const passiveMonitorFloodWarning = createLocalGeoJsonLayer({
-  id: 'local-pm-flood-warning',
-  url: passiveMonitorSource('pm-flood-warning', pmFloodWarningUrl),
-  name: 'PM Flood Warnings',
+const passiveMonitorWeatherWarning = createLocalGeoJsonLayer({
+  id: 'local-pm-weather-warning',
+  url: passiveMonitorSource('pm-weather-warning', pmWeatherWarningUrl),
+  name: 'PM Weather Warnings',
   color: '#00b7ff',
   icon: '◇',
   source: `${PM_SOURCE_LABEL} · BoM`,
@@ -278,7 +284,7 @@ export default [
   passiveMonitorWarnWatch,
   passiveMonitorWarnAdvice,
   passiveMonitorWarnCommunity,
-  passiveMonitorFloodWarning,
+  passiveMonitorWeatherWarning,
   passiveMonitorIncident,
   passiveMonitorBurn,
   passiveMonitorFlood,

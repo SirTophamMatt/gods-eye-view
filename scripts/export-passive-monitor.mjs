@@ -171,18 +171,48 @@ const WARNING_BUCKETS = [
 ];
 
 /**
- * `category2` names the issuing domain: 'Met' for the Bureau-driven products
- * (riverine flood, severe weather, thunderstorm), 'Fire' for the fire-agency
- * ones. The Met warnings are the spatial half of the same BoM products the
- * `weather_warnings` table holds as district-level TEXT — and unlike that table
- * these carry real warning-area polygons, which is why they are drawn from here
- * and not from there.
+ * Is this a Bureau of Meteorology product?
  *
- * They get their own layer so weather can be toggled independently of fire,
- * which leaves the escalation-ladder layers holding fire and other warnings.
+ * The feed carries the issuing domain in a DIFFERENT column depending on the
+ * record type, which is easy to get wrong:
+ *
+ *   feed_type='warning'   category1 = escalation level ('Advice')
+ *                         category2 = domain ('Met' | 'Fire')
+ *   feed_type='incident'  category1 = domain or type ('Met' | 'Fire' |
+ *                         'Planned Burn' | 'Tree Down' | ...)
+ *
+ * So BoM products arrive BOTH ways: riverine flood warnings as feed_type
+ * 'warning' with category2='Met', and district wind/severe-weather warnings as
+ * feed_type 'incident' with category1='Met'. Checking only category2 left the
+ * wind warnings sitting in the Incidents layer — visibly wrong, since a
+ * Damaging Wind warning covering six districts is not an incident.
+ *
+ * Checking both columns catches every Met record regardless of how the feed
+ * classified it. These are the spatial half of the same BoM products the
+ * `weather_warnings` table holds as district-level TEXT; unlike that table they
+ * carry real warning-area polygons, which is why they are drawn from here.
  */
 function isBureauWarning(row) {
-  return clean(row.category2).toLowerCase() === 'met';
+  return clean(row.category2).toLowerCase() === 'met'
+    || clean(row.category1).toLowerCase() === 'met';
+}
+
+/**
+ * First meaningful line of a warning headline, for records whose structured
+ * fields are all empty.
+ *
+ * BoM products carry no event/size/resources, so their detail line came out
+ * blank and the card showed a bare "Warning". The headline holds the actual
+ * content — sometimes a clean title ("Strong Wind Warning"), sometimes a
+ * paragraph of warning text — so take its first line and clamp it.
+ */
+function headlineSummary(headline) {
+  const first = clean(headline)
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+  if (!first) return '';
+  return first.length > 120 ? `${first.slice(0, 117)}…` : first;
 }
 
 function exportVicEmergency(db, includeResolved) {
@@ -196,7 +226,7 @@ function exportVicEmergency(db, includeResolved) {
   `).all();
 
   const groups = {
-    'warn-flood': [],
+    weather: [],
     'warn-emergency': [],
     'warn-watch': [],
     'warn-advice': [],
@@ -219,18 +249,20 @@ function exportVicEmergency(db, includeResolved) {
     let bucket;
     let severity;
     let hazard;
-    if (feedType === 'warning') {
+    // Tested BEFORE feed_type, because a Bureau product can arrive as either a
+    // 'warning' or an 'incident' and belongs in the weather layer either way.
+    if (isBureauWarning(row)) {
       const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
-      // Severity still comes from the escalation level even for Bureau
-      // warnings — only the layer they land in differs.
+      // Severity still comes from the escalation level when the feed gives
+      // one; district weather warnings carry none, so they sit at 'notable'.
       severity = matched ? matched.severity : 1;
-      if (isBureauWarning(row)) {
-        bucket = 'warn-flood';
-        hazard = 'flood-warning';
-      } else {
-        bucket = matched ? matched.key : fallbackWarningBucket;
-        hazard = 'warning';
-      }
+      bucket = 'weather';
+      hazard = 'weather-warning';
+    } else if (feedType === 'warning') {
+      const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
+      severity = matched ? matched.severity : 1;
+      bucket = matched ? matched.key : fallbackWarningBucket;
+      hazard = 'warning';
     } else if (feedType === 'burn-area') {
       bucket = 'burn';
       severity = 0;
@@ -255,7 +287,7 @@ function exportVicEmergency(db, includeResolved) {
         clean(row.size),
         row.resources ? `${row.resources} resources` : '',
         clean(row.action),
-      ]),
+      ]) || headlineSummary(row.headline),
       headline: clean(row.headline),
       category: clean(row.category1),
       resolved: Boolean(row.resolved),
@@ -597,7 +629,7 @@ function main() {
   total += writeLayer('pm-warn-watch', vicEmergency['warn-watch']);
   total += writeLayer('pm-warn-advice', vicEmergency['warn-advice']);
   total += writeLayer('pm-warn-community', vicEmergency['warn-community']);
-  total += writeLayer('pm-flood-warning', vicEmergency['warn-flood']);
+  total += writeLayer('pm-weather-warning', vicEmergency.weather);
   total += writeLayer('pm-incident', vicEmergency.incident);
   total += writeLayer('pm-burn', vicEmergency.burn);
   total += writeLayer('pm-flood', exportFloods(db));

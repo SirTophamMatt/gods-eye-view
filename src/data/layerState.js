@@ -293,7 +293,6 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   // The alphabet is now spent: every letter except the reserved 'z' is taken,
   // so new layers take digits. The token grammar is [a-z0-9], and no suite uses
   // a digit as a layer token, so these are free.
-  Object.freeze({ id: 'local-pm-flood-warning', token: '1', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-incident', token: 'o', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-power', token: 'k', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-roads', token: '2', disposition: 'enabled-only' }),
@@ -306,6 +305,7 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   // than silently decoding to an empty set. Claiming it would quietly delete
   // that guard. Leave 'z' unassigned.
   Object.freeze({ id: 'local-pm-warn-watch', token: 'h', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-weather-warning', token: '1', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military', token: 'm', disposition: 'enabled+mirrored-options', optionOwner: 'flights' }),
   Object.freeze({ id: 'military-awareness', token: 'g', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military-installations', token: 'i', disposition: 'enabled-only' }),

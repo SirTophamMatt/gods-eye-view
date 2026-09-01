@@ -1,0 +1,35 @@
+# Replace godseye.example.com with your real domain (its DNS A record must
+# point at this server's public IP). Caddy then fetches and renews a free
+# Let's Encrypt certificate automatically.
+#
+# The basicauth block is NOT optional here, unlike the Passive Monitor
+# Caddyfile it mirrors. Passive Monitor's dashboards are public data rendered
+# server-side; this app is different — anyone who can load the page can spend
+# your API keys. The Vite proxies broker OpenAI, TomTom, FIRMS, AISStream and
+# OpenSky server-side on behalf of whoever is looking at the page, and the
+# Google Maps and Cesium ion keys are handed to the browser by design. An open
+# instance is an open billing account.
+#
+# Generate the hash with:
+#   docker run --rm caddy:2 caddy hash-password --plaintext 'your-password'
+
+godseye.example.com {
+    basicauth {
+        # viewer <paste-the-bcrypt-hash-here>
+    }
+
+    reverse_proxy app:4173
+
+    encode gzip
+    log {
+        output stdout
+    }
+}
+
+# Local testing without a domain or TLS: comment out the block above, uncomment
+# this one, and browse to http://localhost. Note that basicauth over plain HTTP
+# sends the password in the clear — for a local box only.
+# :80 {
+#     reverse_proxy app:4173
+#     encode gzip
+# }

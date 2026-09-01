@@ -1,0 +1,31 @@
+# Keep secrets out of the image. `COPY . .` would otherwise bake .env into a
+# layer, where it survives in the image history even if deleted later. Keys
+# reach the container through docker-compose `environment:` instead.
+.env
+.env.*
+!.env.example
+
+# Never copy a host node_modules in: it is resolved for the host's platform and
+# would shadow the correct `npm ci` install inside the image.
+node_modules
+dist
+
+.git
+.gitignore
+.gitattributes
+
+# Build/QA output that has no meaning inside the image.
+*.log
+screenshots/
+qa-shots/
+output/
+.gev-logs/
+.gev-cache/
+.gstack/
+3d-models/
+
+# Editor and OS noise.
+.DS_Store
+.vscode
+.idea
+.claude

@@ -1,0 +1,66 @@
+# God's Eye View on a single VPS: the app plus Caddy for automatic HTTPS.
+#
+# Same shape as the Passive Monitor deployment, so both can sit on one host.
+# Put your keys in a .env file next to this one (copy .env.example) and your
+# domain in the Caddyfile, then:  docker compose up -d --build
+#
+# If Passive Monitor is already running on this host, note that it also binds
+# :80/:443 through its own Caddy. Run ONE Caddy for the box — either add a
+# second site block to that Caddyfile pointing at this app, or stop its Caddy
+# and serve both domains from this one. Two containers cannot both hold :443.
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      # REQUIRED. The base globe is Google Photorealistic 3D Tiles; without
+      # this the app shows an error instead of a globe. Exposed to the browser
+      # by design, so restrict it by HTTP referrer in Google Cloud Console and
+      # set a billing budget before going anywhere near the public internet.
+      GOOGLE_MAPS_API_KEY: ${GOOGLE_MAPS_API_KEY}
+      # Also browser-exposed. Restrict at the provider.
+      CESIUM_ION_TOKEN: ${CESIUM_ION_TOKEN:-}
+
+      # Server-side only: these are brokered by the Vite proxies and never
+      # reach the browser. Every one is optional — a missing key degrades its
+      # own layer and leaves the rest of the app working.
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      AISSTREAM_API_KEY: ${AISSTREAM_API_KEY:-}
+      FIRMS_MAP_KEY: ${FIRMS_MAP_KEY:-}
+      TOMTOM_API_KEY: ${TOMTOM_API_KEY:-}
+      OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID:-}
+      OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET:-}
+
+      # Per-IP throttles. These are app-level guards, NOT billing caps — set
+      # spend limits at each provider as well.
+      GEV_RATELIMIT_OPENAI_PER_MIN: ${GEV_RATELIMIT_OPENAI_PER_MIN:-6}
+      GEV_RATELIMIT_GOOGLE_PER_MIN: ${GEV_RATELIMIT_GOOGLE_PER_MIN:-30}
+
+      HOST: 0.0.0.0
+      PORT: 4173
+    expose:
+      - "4173"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:4173/"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      # Cesium's dependency graph makes the first cold optimize pass slow.
+      start_period: 120s
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

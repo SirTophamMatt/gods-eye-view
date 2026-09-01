@@ -23,6 +23,7 @@ import { MapStackController } from './mapStackController.js';
 import { initAnnotations } from './annotations/index.js';
 import { initLogoGaze } from './logoGaze.js';
 import { initCockpitCloudEffects } from './cockpitCloudEffects.js';
+import { initPassiveMonitorDetail } from './data/passiveMonitorDetail.js';
 import {
   installRenderGovernor,
   getRenderGovernorDiagnostics,
@@ -197,6 +198,11 @@ async function init() {
     // Cesium fog or post-process stages and is fully stopped in map mode.
     const weatherEffects = null;
     const cockpitCloudEffects = initCockpitCloudEffects(viewer);
+
+    // Click-to-read detail for the Passive Monitor layers. Listens on the
+    // existing gev:entity-selected event, so it adds no pick handling of its
+    // own and cannot affect selection for any other layer.
+    initPassiveMonitorDetail();
 
     // If no share link state, open on the default location
     if (!styleManager.hasShareState) {

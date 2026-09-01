@@ -9161,3 +9161,220 @@ body.scene-playback-mode #first-run-launcher {
   /* Scrolling a tile into view must not animate either. */
   .first-run-choices { scroll-behavior: auto; }
 }
+
+/* ===========================================================================
+   Passive Monitor detail panel
+   Opens on clicking a PM feature. Uses the same glass/blur treatment as the
+   dock panels, but sized to be READ rather than scanned — the ambient card
+   beside a marker clamps to one line, which is right for a crowded map and
+   useless for a paragraph of warning text.
+   =========================================================================== */
+
+.pm-detail-panel {
+  position: absolute;
+  top: 96px;
+  /* Clear of the right rail (DISPLAY / CCTV / CONTEXT), measured against its
+     EXPANDED width rather than its collapsed one — otherwise opening a rail
+     panel drops it on top of this. */
+  --pm-detail-gutter: calc(var(--right-rail-x) + var(--display-panel-expanded-width) + 16px);
+  right: var(--pm-detail-gutter);
+  z-index: 60;
+  width: min(420px, calc(100vw - var(--pm-detail-gutter) - 24px));
+  max-height: calc(100vh - 220px);
+  font-family: var(--font-sans);
+  /* Overridden per record from the severity palette. */
+  --pm-detail-accent: var(--accent);
+  animation: pm-detail-in 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pm-detail-panel[hidden] { display: none; }
+
+@keyframes pm-detail-in {
+  from { opacity: 0; transform: translateY(-6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.pm-detail-inner {
+  display: flex;
+  flex-direction: column;
+  max-height: inherit;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  /* The accent edge is the only per-severity chrome: a full coloured panel
+     would fight the map, which is the actual subject. */
+  border-left: 2px solid var(--pm-detail-accent);
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 1px 0 rgba(255, 255, 255, 0.06) inset;
+  overflow: hidden;
+}
+
+.pm-detail-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 14px 10px 16px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.pm-detail-headline-group { flex: 1; min-width: 0; }
+
+.pm-detail-kicker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.pm-detail-sev {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--pm-detail-accent);
+  border: 1px solid var(--pm-detail-accent);
+  border-radius: 3px;
+  padding: 1px 5px;
+}
+
+.pm-detail-layer {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pm-detail-title {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text-primary);
+  /* Long river reach names wrap rather than truncate — the name IS the
+     location here, so clipping it costs the reader the answer. */
+  overflow-wrap: anywhere;
+}
+
+.pm-detail-close {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.pm-detail-close:hover {
+  color: var(--text-primary);
+  border-color: var(--glass-border-hover);
+}
+
+.pm-detail-body {
+  padding: 12px 16px 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pm-detail-badge {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--pm-detail-accent) 18%, transparent);
+  color: var(--pm-detail-accent);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+
+.pm-detail-text {
+  margin-bottom: 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+  /* Feed text carries real newlines; preserving them keeps a multi-clause
+     warning readable instead of running it into one block. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.pm-detail-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-top: 12px;
+  border-top: 1px solid var(--glass-border);
+}
+
+.pm-detail-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.pm-detail-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.pm-detail-value {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pm-detail-link {
+  display: inline-block;
+  margin-top: 14px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px solid var(--accent-dim);
+  transition: border-color var(--transition-fast);
+}
+
+.pm-detail-link:hover { border-bottom-color: var(--accent); }
+
+.pm-detail-note {
+  margin-top: 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1.5;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+
+/* On a narrow viewport the panel becomes a bottom sheet: a 420px column
+   pinned right would cover the map it is describing. */
+@media (max-width: 720px) {
+  .pm-detail-panel {
+    top: auto;
+    right: 12px;
+    left: 12px;
+    bottom: 96px;
+    width: auto;
+    max-height: 48vh;
+  }
+  .pm-detail-row { grid-template-columns: 84px 1fr; }
+}

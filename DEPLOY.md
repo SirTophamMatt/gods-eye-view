@@ -125,7 +125,7 @@ resolve them by name.
 
 ## Refreshing the Passive Monitor layers
 
-The four `PM …` layers are a committed snapshot, not a live feed. Regenerate
+The nine `PM …` layers are a committed snapshot, not a live feed. Regenerate
 them from a Passive Monitor database and redeploy:
 
 ```bash
@@ -150,6 +150,12 @@ keys `allowedHosts: true` off exactly that value.
 **Globe renders as an error message** — `GOOGLE_MAPS_API_KEY` is missing or
 referrer-restricted to a domain that is not this one.
 
-**A single layer is empty while others work** — that provider's key is absent
-or rate-limited. Check `docker compose logs app` for the proxy's sanitized
-error; a missing key never takes the rest of the app down.
+**A single LIVE layer is empty while others work** — that provider's key is
+absent or rate-limited. Check `docker compose logs app` for the proxy's
+sanitized error; a missing key never takes the rest of the app down.
+
+**A `PM …` warning layer is empty** — this is usually correct, not a fault.
+`PM Emergency Warnings` and `PM Watch & Act` are empty whenever nothing is
+current at that level, which is most of the time. The layer still registers and
+still toggles, and it fills in on the next export with no code change. A genuine
+failure looks different: the layer reports an error rather than a count of zero.

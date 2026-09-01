@@ -286,11 +286,21 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   // Passive Monitor hazard snapshots. Every layer the manager registers must
   // appear here — finalizeRegistrations() demands an exact bijection and throws
   // at boot otherwise — so these are registered even though they hold no
-  // options of their own.
-  Object.freeze({ id: 'local-pm-fire', token: 'h', disposition: 'enabled-only' }),
+  // options of their own. Tokens are single characters and permanent: changing
+  // one silently breaks every share link that already encoded the old value.
+  Object.freeze({ id: 'local-pm-burn', token: 'l', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-flood', token: 'j', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-incident', token: 'o', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-power', token: 'k', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-storm', token: 'n', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-warn-advice', token: 'p', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-warn-community', token: 'v', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-pm-warn-emergency', token: 'y', disposition: 'enabled-only' }),
+  // Not 'z': two suites (layerState, sharelink.celestial) use `l=z` as their
+  // canonical UNKNOWN token to prove a bad share payload is rejected rather
+  // than silently decoding to an empty set. Claiming it would quietly delete
+  // that guard. Leave 'z' unassigned.
+  Object.freeze({ id: 'local-pm-warn-watch', token: 'h', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military', token: 'm', disposition: 'enabled+mirrored-options', optionOwner: 'flights' }),
   Object.freeze({ id: 'military-awareness', token: 'g', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military-installations', token: 'i', disposition: 'enabled-only' }),

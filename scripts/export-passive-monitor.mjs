@@ -84,22 +84,56 @@ function detailLine(parts) {
 }
 
 /**
- * Parse a geometry column that holds raw GeoJSON. Passive Monitor stores these
- * verbatim from the upstream feed, so a malformed one must not abort the export.
+ * Pull every AREA geometry out of a raw GeoJSON column.
+ *
+ * VicEmergency does not hand back a bare polygon. The overwhelming majority of
+ * these columns are a `GeometryCollection` pairing marker Points with the
+ * actual warning-area Polygons — `(Point, Polygon)` is the single most common
+ * shape, and multi-area warnings run to eight Points and eight Polygons in one
+ * record. An earlier version of this exporter tested for `geometry.coordinates`,
+ * which a GeometryCollection does not have (it has `geometries`), so it silently
+ * discarded 68 of the 123 stored geometries — including EVERY warning area.
+ *
+ * So: recurse into collections, keep the Polygon/MultiPolygon members, and drop
+ * the Points. The points are redundant — each record already carries its own
+ * latitude/longitude for the label anchor — and drawing them would double every
+ * marker.
+ *
+ * A malformed geometry must never abort the export; it just contributes nothing.
  */
-function parseGeometry(raw) {
+function extractPolygons(raw) {
   const text = clean(raw);
-  if (!text) return null;
+  if (!text) return [];
+
+  let parsed;
   try {
-    const geo = JSON.parse(text);
-    if (!geo || typeof geo !== 'object') return null;
-    // Accept either a bare geometry or a wrapping Feature.
-    const geometry = geo.type === 'Feature' ? geo.geometry : geo;
-    if (!geometry || !geometry.type || !geometry.coordinates) return null;
-    return geometry;
+    parsed = JSON.parse(text);
   } catch {
-    return null;
+    return [];
   }
+
+  const found = [];
+  const walk = (node, depth = 0) => {
+    if (!node || typeof node !== 'object' || depth > 8) return;
+    // Accept either a bare geometry or a wrapping Feature.
+    const geometry = node.type === 'Feature' ? node.geometry : node;
+    if (!geometry || typeof geometry !== 'object') return;
+
+    if (geometry.type === 'GeometryCollection') {
+      for (const child of geometry.geometries || []) walk(child, depth + 1);
+      return;
+    }
+    if (
+      (geometry.type === 'Polygon' || geometry.type === 'MultiPolygon')
+      && Array.isArray(geometry.coordinates)
+      && geometry.coordinates.length
+    ) {
+      found.push({ type: geometry.type, coordinates: geometry.coordinates });
+    }
+  };
+
+  walk(parsed);
+  return found;
 }
 
 function feature(geometry, properties) {
@@ -111,37 +145,86 @@ function point(lon, lat) {
 }
 
 /**
- * Fire incidents. `warning_level` is the operational escalation ladder, so it
- * drives severity ahead of the free-text `severity` column, which upstream
- * populates inconsistently.
+ * The `fire_incidents` table is misnamed: it is the whole VicEmergency feed,
+ * and `feed_type` splits it into three genuinely different things.
+ *
+ *   warning    — a public warning over an AREA. Carries the escalation level in
+ *                `warning_level` and, in this dataset, ALWAYS carries geometry.
+ *   incident   — an operational event at a POINT (fire, tree down, rescue,
+ *                hazmat). Has no warning level at all.
+ *   burn-area  — a planned/historical burn footprint. Passive Monitor's own
+ *                `active_incidents()` deliberately excludes these.
+ *
+ * Mixing them into one layer was wrong on its own terms, and it also buried the
+ * warning ladder — which is the part with operational meaning. So each level
+ * gets its own layer, and incidents and burn areas get theirs.
+ *
+ * `warning_level` is verbatim `category1` from the feed (see the scraper), so
+ * matching is done on a folded substring rather than an exact string: the feed
+ * owns that vocabulary, not us.
  */
-function exportFires(db, includeResolved) {
+const WARNING_BUCKETS = [
+  { key: 'warn-emergency', match: (s) => s.includes('emergency'), severity: 3 },
+  { key: 'warn-watch', match: (s) => s.includes('watch'), severity: 2 },
+  { key: 'warn-advice', match: (s) => s.includes('advice'), severity: 1 },
+  { key: 'warn-community', match: (s) => s.includes('community'), severity: 0 },
+];
+
+function exportVicEmergency(db, includeResolved) {
   const where = includeResolved ? '' : 'WHERE resolved = 0';
   const rows = db.prepare(`
-    SELECT source_id, event, category1, warning_level, severity, status, size,
-           resources, location, action, headline, url, latitude, longitude,
-           updated, last_seen, resolved, geometry
+    SELECT source_id, feed_type, event, category1, category2, warning_level,
+           severity, status, size, resources, location, action, headline, url,
+           latitude, longitude, updated, last_seen, resolved, geometry
     FROM fire_incidents
     ${where}
   `).all();
 
-  const out = [];
+  const groups = {
+    'warn-emergency': [],
+    'warn-watch': [],
+    'warn-advice': [],
+    'warn-community': [],
+    incident: [],
+    burn: [],
+  };
+  // A warning whose level is absent or unrecognised must not vanish: the feed
+  // can introduce a level this build has never seen. Park it with Advice, the
+  // lowest ACTIONABLE rung, so it is visible rather than silently dropped.
+  const fallbackWarningBucket = 'warn-advice';
+
   for (const row of rows) {
     if (!validCoord(row.latitude, row.longitude)) continue;
 
+    const feedType = clean(row.feed_type).toLowerCase();
     const warning = clean(row.warning_level);
     const warningKey = warning.toLowerCase();
-    let severity = 1;
-    if (warningKey.includes('emergency')) severity = 3;
-    else if (warningKey.includes('watch')) severity = 2;
-    else if (warningKey.includes('advice')) severity = 1;
-    else severity = 0;
+
+    let bucket;
+    let severity;
+    let hazard;
+    if (feedType === 'warning') {
+      const matched = WARNING_BUCKETS.find((b) => b.match(warningKey));
+      bucket = matched ? matched.key : fallbackWarningBucket;
+      severity = matched ? matched.severity : 1;
+      hazard = 'warning';
+    } else if (feedType === 'burn-area') {
+      bucket = 'burn';
+      severity = 0;
+      hazard = 'burn-area';
+    } else {
+      bucket = 'incident';
+      // Incidents carry no level. A live fire outranks a tree down.
+      severity = clean(row.category1).toLowerCase() === 'fire' ? 2 : 1;
+      hazard = 'incident';
+    }
     if (row.resolved) severity = 0;
 
-    const name = clean(row.location) || clean(row.event) || 'Fire incident';
+    const name = clean(row.location) || clean(row.event) || 'VicEmergency record';
     const properties = {
       name,
-      hazard: 'fire',
+      hazard,
+      warningLevel: warning || null,
       severity,
       status: warning || clean(row.status) || clean(row.event),
       detail: detailLine([
@@ -155,24 +238,28 @@ function exportFires(db, includeResolved) {
       resolved: Boolean(row.resolved),
       ts: clean(row.updated) || clean(row.last_seen),
       url: clean(row.url),
-      source: 'Passive Monitor · fire',
+      source: `Passive Monitor · ${hazard}`,
     };
 
-    // The point is the anchor the label and card hang off. Where the feed also
-    // gave a fire-ground polygon, emit it as a second feature so the extent
-    // draws too — a 300 ha fire should not read as a dot.
-    out.push(feature(point(row.longitude, row.latitude), properties));
+    // The point anchors the label and the card.
+    groups[bucket].push(feature(point(row.longitude, row.latitude), properties));
 
-    const geometry = parseGeometry(row.geometry);
-    if (geometry && geometry.type !== 'Point') {
-      out.push(feature(geometry, {
+    // Then the area itself. For a warning this polygon IS the product — it is
+    // the ground the warning actually covers — so a multi-area warning emits
+    // one feature per polygon rather than being collapsed to its centroid.
+    const polygons = extractPolygons(row.geometry);
+    polygons.forEach((geometry, index) => {
+      groups[bucket].push(feature(geometry, {
         ...properties,
-        name: `${name} (extent)`,
+        name: polygons.length > 1
+          ? `${name} (area ${index + 1} of ${polygons.length})`
+          : `${name} (area)`,
         isExtent: true,
       }));
-    }
+    });
   }
-  return out;
+
+  return groups;
 }
 
 /**
@@ -298,8 +385,7 @@ function exportStorms(db) {
 
     out.push(feature(point(row.longitude, row.latitude), properties));
 
-    const geometry = parseGeometry(row.impact_geojson);
-    if (geometry && geometry.type !== 'Point') {
+    for (const geometry of extractPolygons(row.impact_geojson)) {
       out.push(feature(geometry, {
         ...properties,
         name: `${properties.name} (impact area)`,
@@ -393,8 +479,16 @@ function main() {
   console.log(`  scope:  ${includeResolved ? 'all records' : 'active records only'}`);
   console.log('');
 
+  const vicEmergency = exportVicEmergency(db, includeResolved);
+
   let total = 0;
-  total += writeLayer('pm-fire', exportFires(db, includeResolved));
+  // Warning ladder, most severe first — the order an operator reads them in.
+  total += writeLayer('pm-warn-emergency', vicEmergency['warn-emergency']);
+  total += writeLayer('pm-warn-watch', vicEmergency['warn-watch']);
+  total += writeLayer('pm-warn-advice', vicEmergency['warn-advice']);
+  total += writeLayer('pm-warn-community', vicEmergency['warn-community']);
+  total += writeLayer('pm-incident', vicEmergency.incident);
+  total += writeLayer('pm-burn', vicEmergency.burn);
   total += writeLayer('pm-flood', exportFloods(db));
   total += writeLayer('pm-storm', exportStorms(db));
   total += writeLayer('pm-power', exportPower(db, includeResolved));
@@ -403,8 +497,13 @@ function main() {
 
   console.log('');
   console.log(`  ${total} features written to src/data/local_data/passive-monitor/`);
+  console.log('');
+  console.log('  An empty warning layer is a real answer, not a failure: it means');
+  console.log('  nothing is current at that level. The layer still registers, so it');
+  console.log('  populates on the next export without a code change.');
   if (!total) {
-    console.log('  (nothing exported — is this the right database?)');
+    console.log('');
+    console.log('  (nothing exported at all — is this the right database?)');
   }
 }
 

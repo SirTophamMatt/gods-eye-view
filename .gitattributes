@@ -1,0 +1,24 @@
+# Keep every text file LF in the working tree, on every platform.
+#
+# Several unit tests assert against source text with LF-anchored regexes
+# (e.g. src/scenes/director.test.mjs matches /\n {2}\}\n/ against src/ui.js).
+# A Windows clone with core.autocrlf=true checks those files out as CRLF and
+# fails 25 tests that have nothing to do with the code under test.
+* text=auto eol=lf
+
+# Binary assets must never be line-ending converted.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.svg  text eol=lf
+*.ico  binary
+*.pdf  binary
+*.glb  binary
+*.gltf binary
+*.ktx2 binary
+*.wav  binary
+*.mp3  binary
+*.mp4  binary
+*.woff  binary
+*.woff2 binary

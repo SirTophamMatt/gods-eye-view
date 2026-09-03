@@ -102,37 +102,50 @@ test('the action lists the stations and draws one line to each', async () => {
 
   assert.equal(drawn.length, 1, 'one batched annotate call');
   const { specs, opts } = drawn[0];
-  assert.equal(specs.length, 3);
+  assert.equal(specs.length, 6, 'a pin and a route for each of the three stations');
   assert.equal(opts.clearPrevious, true, 'a second incident must not leave the first ones up');
-  for (let i = 0; i < specs.length; i += 1) {
-    assert.equal(specs[i].type, 'route');
-    assert.equal(specs[i].color, 'green', 'resource green, not hazard red');
-    assert.equal(specs[i].mode, 'car', 'an appliance drives — the engine would otherwise label it a walk');
+  for (let i = 0; i < STATIONS.length; i += 1) {
+    const pin = specs[i * 2];
+    const route = specs[(i * 2) + 1];
+
+    // The PIN carries the name, at the station. A route's own caption is drawn
+    // at the path MIDPOINT, which stranded the words "Cranbourne Fire Station"
+    // in a paddock 672 m from the station and 577 m from the fire — naming a
+    // place at neither end of the line that reaches it.
+    assert.equal(pin.type, 'pin');
+    assert.equal(pin.color, 'green', 'resource green, not hazard red');
+    assert.equal(pin.latitude, STATIONS[i].latitude);
+    assert.equal(pin.longitude, STATIONS[i].longitude);
+    assert.ok(pin.label.startsWith(STATIONS[i].name));
+    assert.match(pin.label, /Code 1/, 'the model is named, never left as a bare time');
+
+    assert.equal(route.type, 'route');
+    assert.equal(route.color, 'green');
+    assert.equal(route.mode, 'car', 'an appliance drives — the engine would otherwise label it a walk');
     // Station FIRST — the appliance travels from the brigade to the fire, and
     // OSRM routes are direction-dependent, so reversing this can change both
     // the path drawn and the time quoted.
-    assert.deepEqual(specs[i].points[0], {
+    assert.deepEqual(route.points[0], {
       latitude: STATIONS[i].latitude,
       longitude: STATIONS[i].longitude,
     });
-    assert.deepEqual(specs[i].points[1], { latitude: ORIGIN.latitude, longitude: ORIGIN.longitude });
+    assert.deepEqual(route.points[1], { latitude: ORIGIN.latitude, longitude: ORIGIN.longitude });
     // The caller composes the whole label and suppresses the engine's own
     // metrics: its suffix is the ORDINARY car-profile time, and two travel
     // times on one line is worse than either alone.
-    assert.equal(specs[i].metrics, false);
-    assert.ok(specs[i].label.startsWith(STATIONS[i].name));
-    assert.match(specs[i].label, /Code 1/, 'the model is named, never left as a bare time');
+    assert.equal(route.metrics, false);
+    assert.equal(route.label, null, 'the pin owns the caption; a captioned route repeats it');
   }
 
   // A bare "2 min" beside a fire reads as a response time to anyone who does
   // not know how it was computed.
   assert.equal(specs[0].label, 'Wendouree Fire Station · 2 min Code 1 · CFA');
-  assert.equal(specs[1].label, 'Ballarat City Fire Station · 4 min Code 1 · FRV');
+  assert.equal(specs[2].label, 'Ballarat City Fire Station · 4 min Code 1 · FRV');
 
   // The engine clamps a label at 80 characters and truncates mid-word, so a
   // line that overruns loses its agency code rather than wrapping.
   for (const spec of specs) {
-    assert.ok(spec.label.length <= 80, `${spec.label.length} chars: ${spec.label}`);
+    if (spec.label) assert.ok(spec.label.length <= 80, `${spec.label.length} chars: ${spec.label}`);
   }
 
   assert.equal(panel.button.disabled, false, 'the control is released');

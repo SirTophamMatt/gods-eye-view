@@ -402,7 +402,7 @@ export async function showNearestBrigades(panel, origin, button) {
         </div>`).join('')}
       <p class="pm-detail-note">${escapeHtml(BRIGADE_DISCLAIMER)}</p>`;
 
-    drawBrigadeLines(origin, stations);
+    drawBrigadeMarks(origin, stations);
   } catch (error) {
     // The gazetteer is bundled with the build, so a failure here is a broken
     // install rather than a slow network — say so instead of offering a retry
@@ -417,7 +417,7 @@ export async function showNearestBrigades(panel, origin, button) {
 }
 
 /**
- * Draw one road route from the incident to each station.
+ * Mark each brigade and draw its road route to the incident.
  *
  * `route` is street-following, not a straight line: the engine sends the
  * endpoints to the /api/route proxy and draws the real path, appending its
@@ -449,28 +449,50 @@ export async function showNearestBrigades(panel, origin, button) {
  * @param {{latitude: number, longitude: number}} origin Incident position.
  * @param {object[]} stations Nearest stations with `distanceKm`.
  */
-function drawBrigadeLines(origin, stations) {
+function drawBrigadeMarks(origin, stations) {
   const engine = _annotations();
   if (!engine?.annotate) return;
   try {
-    engine.annotate(stations.map((station) => ({
-      type: 'route',
-      color: 'green',
-      mode: 'car',
-      // `metrics: false` suppresses the engine's own "— 4.2 km · 4 min drive".
-      // That figure is the ordinary car profile; ours is the Code 1 model over
-      // the same route, and two travel times on one line is worse than either
-      // alone. The engine still ROUTES — it needs the road geometry to draw —
-      // and hits the proxy's 10-minute cache, so this costs no extra request.
-      metrics: false,
-      label: brigadeLineLabel(station),
-      // Station first: the line is drawn in the direction of travel, from the
-      // brigade to the fire, matching the route the time was computed over.
-      points: [
-        { latitude: station.latitude, longitude: station.longitude },
-        { latitude: origin.latitude, longitude: origin.longitude },
-      ],
-    })), { clearPrevious: true, persist: true });
+    engine.annotate(stations.flatMap((station) => ([
+      {
+        // A PIN at the station, carrying the whole label.
+        //
+        // The route's own caption is drawn at the path MIDPOINT, which for
+        // these puts the words "Cranbourne Fire Station" in a paddock 672 m
+        // from the station and 577 m from the fire — naming a place at
+        // neither end of the line that reaches it, with nothing marking
+        // either endpoint. Three of those bunch together where the routes
+        // converge and you cannot tell which line belongs to which brigade.
+        // The pin puts the name where the station actually is.
+        type: 'pin',
+        color: 'green',
+        latitude: station.latitude,
+        longitude: station.longitude,
+        label: brigadeLineLabel(station),
+      },
+      {
+        type: 'route',
+        color: 'green',
+        mode: 'car',
+        // `metrics: false` suppresses the engine's own "— 4.2 km · 4 min
+        // drive". That figure is the ordinary car profile; ours is the Code 1
+        // model over the same route, and two travel times on one line is
+        // worse than either alone. The engine still ROUTES — it needs the road
+        // geometry to draw — and hits the proxy's 10-minute cache, so this
+        // costs no extra request.
+        metrics: false,
+        // No label: the pin above carries it. A captioned route would put a
+        // second copy of the same text back in the middle of the road.
+        label: null,
+        // Station first: the line is drawn in the direction of travel, from
+        // the brigade to the fire, matching the route the time was computed
+        // over.
+        points: [
+          { latitude: station.latitude, longitude: station.longitude },
+          { latitude: origin.latitude, longitude: origin.longitude },
+        ],
+      },
+    ])), { clearPrevious: true, persist: true });
   } catch {
     /* the panel already carries the answer */
   }

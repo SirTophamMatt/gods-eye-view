@@ -382,6 +382,16 @@ function exportFloods(db) {
         thresholds,
       ]),
       heightM: Number.isFinite(row.height_m) ? row.height_m : null,
+      // Thresholds as STRUCTURED fields as well as inside `detail`. The detail
+      // line is for reading; these are for drawing. The app's gauge chart
+      // prefers them and falls back to parsing the string, which is what lets
+      // it work against snapshots exported before this field existed — but a
+      // consumer should not have to reverse a formatted string to learn the
+      // number that produced it.
+      minorM: Number.isFinite(row.minor) ? row.minor : null,
+      moderateM: Number.isFinite(row.moderate) ? row.moderate : null,
+      majorM: Number.isFinite(row.major) ? row.major : null,
+      tendency: clean(row.tendency).toLowerCase() || null,
       catchment: clean(row.catchment),
       ts: clean(row.timestamp) || clean(row.time_day),
       source: 'Passive Monitor · flood',

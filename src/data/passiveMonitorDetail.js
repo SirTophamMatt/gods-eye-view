@@ -24,6 +24,7 @@
 
 import { formatDistanceKm } from './nearestStations.js';
 import { formatMinutes } from './code1Response.js';
+import { floodGaugeChart } from './floodGauge.js';
 import { agencyLabel, agencyShort } from './stationAgency.js';
 
 const PANEL_ID = 'pm-detail-panel';
@@ -201,6 +202,14 @@ export function renderPassiveMonitorDetail(record) {
   const headline = text(props.headline);
   const url = safeUrl(props.url);
 
+  // Only flood gauges get a chart. "4.07 m" means nothing without the levels
+  // that river floods at, and everything with them — which band it is in, and
+  // how much headroom is left. Every other hazard's numbers are already
+  // self-describing in the rows below.
+  const gaugeChart = text(props.hazard) === 'flood'
+    ? floodGaugeChart(props)
+    : '';
+
   // `detail` is built from the headline's first line when a record has no
   // structured fields of its own, so for BoM products it restates text already
   // shown in full directly above. Drop the row rather than print it twice.
@@ -229,6 +238,7 @@ export function renderPassiveMonitorDetail(record) {
       <div class="pm-detail-body">
         ${props.warningLevel ? `<div class="pm-detail-badge">${escapeHtml(text(props.warningLevel))}</div>` : ''}
         ${headline ? `<p class="pm-detail-text">${escapeHtml(headline)}</p>` : ''}
+        ${gaugeChart}
 
         <div class="pm-detail-rows">
           ${row('Status', props.status)}
@@ -454,9 +464,11 @@ function drawBrigadeLines(origin, stations) {
       // and hits the proxy's 10-minute cache, so this costs no extra request.
       metrics: false,
       label: brigadeLineLabel(station),
+      // Station first: the line is drawn in the direction of travel, from the
+      // brigade to the fire, matching the route the time was computed over.
       points: [
-        { latitude: origin.latitude, longitude: origin.longitude },
         { latitude: station.latitude, longitude: station.longitude },
+        { latitude: origin.latitude, longitude: origin.longitude },
       ],
     })), { clearPrevious: true, persist: true });
   } catch {

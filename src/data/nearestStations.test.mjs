@@ -111,6 +111,28 @@ test('distances read at the precision they actually have', () => {
   assert.equal(formatDistanceKm(NaN), '');
 });
 
+test('the snapshot holds no duplicate station records', () => {
+  // The gazetteer repeats 29 names, 21 of them at identical coordinates — one
+  // station recorded twice. Left in, a duplicate spends one of the three slots
+  // in a "nearest brigades" answer and lists the same brigade twice, which is
+  // what it did before the exporter started collapsing them.
+  const stations = parseStations(readFileSync(SNAPSHOT, 'utf8'));
+  const seen = new Set();
+  const repeats = [];
+  for (const station of stations) {
+    const key = `${station.name}|${station.longitude.toFixed(3)}|${station.latitude.toFixed(3)}`;
+    if (seen.has(key)) repeats.push(station.name);
+    seen.add(key);
+  }
+  assert.deepEqual(repeats, [], 'a name at the same point must appear once');
+
+  // But a name genuinely shared by two DIFFERENT places is kept: there are two
+  // Cooma fire stations 364 km apart, and collapsing them by name alone would
+  // lose a real brigade.
+  const cooma = stations.filter((s) => s.name === 'Cooma Fire Station');
+  assert.equal(cooma.length, 2, 'distinct places sharing a name both survive');
+});
+
 test('the committed station snapshot answers a real Victorian query', () => {
   // An end-to-end check against the shipped gazetteer, not a fixture: this is
   // what catches a bad export that parses fine but has lost its names or put

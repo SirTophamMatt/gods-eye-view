@@ -9365,6 +9365,31 @@ body.scene-playback-mode #first-run-launcher {
   color: var(--text-dim);
 }
 
+/* Flood-gauge level chart. `currentColor` carries the panel's text colour into
+   the SVG's track and ticks, so it follows the theme without a second palette. */
+.fg-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 12px 0 4px;
+  color: var(--text-primary);
+  overflow: visible;
+}
+
+.fg-chart .fg-tick {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.4px;
+  fill: var(--text-dim);
+}
+
+.fg-chart .fg-reading {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+}
+
 /* Nearest-brigades action. Deliberately not accented like .pm-detail-link:
    that link leads OUT to the authoritative warning and earns the emphasis,
    while this runs a local lookup and should not compete with it. */

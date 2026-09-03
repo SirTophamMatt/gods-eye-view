@@ -319,6 +319,13 @@ export function localDatasetError(error) {
  * hazard-layer fill alpha. Boundary layers instead draw as a ground-clamped
  * outline over a barely-there wash, with the label resting on the centroid.
  * See BOUNDARY_FILL_ALPHA and the entity loop below.
+ *
+ * `styleFeature(properties)` overrides colour and size PER RECORD, returning
+ * `{color, pixelSize}` (either optional). One style per layer is right when
+ * every record means the same thing; a layer where they do not — flood gauges,
+ * where three of 319 are above their flood level — needs the three that matter
+ * to be findable. The returned colour also becomes that record's card accent,
+ * so the dot and its label agree.
  */
 export function createLocalGeoJsonLayer({
   id,
@@ -328,6 +335,7 @@ export function createLocalGeoJsonLayer({
   icon = '📍',
   source = 'Local JSONL',
   outlineOnly = false,
+  styleFeature = null,
   labels = true,
   labelMax = DEFAULT_LABEL_MAX,
   labelGridPx = DEFAULT_LABEL_GRID_PX,
@@ -586,6 +594,8 @@ export function createLocalGeoJsonLayer({
             const tip = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, tipHeight);
             const properties = propertyObject(feature);
             const recordId = String(feature.id ?? i);
+            /** Per-feature accent, so a styled record card matches its dot. */
+            let accentOverride = null;
 
             // Store references for bounded stem scaling and native picking.
             feature.__localBaseCarto = carto;
@@ -630,21 +640,32 @@ export function createLocalGeoJsonLayer({
               // diverge. Skipping them leaves visible gaps in the border
               // around alpine resorts and enclave councils.
             } else {
+              // Per-feature styling, where a layer asked for it. One colour
+              // and one size per LAYER is right when every record means the
+              // same thing, and wrong for a layer whose whole point is that
+              // they do not: 316 flood gauges below their flood level and 3
+              // above are one undifferentiated field of dots otherwise, and
+              // the three that matter are the ones you cannot find.
+              const style = styleFeature ? styleFeature(properties) || {} : {};
+              const pointColor = style.color ? Cesium.Color.fromCssColorString(style.color) : baseColor;
+              const pixelSize = Number.isFinite(style.pixelSize) ? style.pixelSize : 10;
+
               feature.position = tip;
               feature.polyline = new Cesium.PolylineGraphics({
                 positions: stemPositionBuffers[0],
                 width: 3.5,
-                material: new Cesium.ColorMaterialProperty(baseColor),
+                material: new Cesium.ColorMaterialProperty(pointColor),
               });
               feature.point = new Cesium.PointGraphics({
-                pixelSize: 10,
-                color: baseColor,
+                pixelSize,
+                color: pointColor,
                 outlineColor: Cesium.Color.BLACK,
                 outlineWidth: 2,
                 // Never depth-cull the anchor against the photoreal mesh —
                 // globe-horizon culling is handled by the pre-render occluder.
                 disableDepthTestDistance: Number.POSITIVE_INFINITY,
               });
+              if (style.color) accentOverride = style.color;
             }
 
             const priority = labelPriorityFromProperties(properties, id);
@@ -674,7 +695,7 @@ export function createLocalGeoJsonLayer({
                 position: tip,
                 properties,
                 priority,
-                accent: color,
+                accent: accentOverride || color,
               }) : null,
             });
           }

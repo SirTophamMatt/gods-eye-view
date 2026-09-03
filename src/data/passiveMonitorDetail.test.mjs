@@ -108,11 +108,14 @@ test('the action lists the stations and draws one line to each', async () => {
     assert.equal(specs[i].type, 'route');
     assert.equal(specs[i].color, 'green', 'resource green, not hazard red');
     assert.equal(specs[i].mode, 'car', 'an appliance drives — the engine would otherwise label it a walk');
-    assert.deepEqual(specs[i].points[0], { latitude: ORIGIN.latitude, longitude: ORIGIN.longitude });
-    assert.deepEqual(specs[i].points[1], {
+    // Station FIRST — the appliance travels from the brigade to the fire, and
+    // OSRM routes are direction-dependent, so reversing this can change both
+    // the path drawn and the time quoted.
+    assert.deepEqual(specs[i].points[0], {
       latitude: STATIONS[i].latitude,
       longitude: STATIONS[i].longitude,
     });
+    assert.deepEqual(specs[i].points[1], { latitude: ORIGIN.latitude, longitude: ORIGIN.longitude });
     // The caller composes the whole label and suppresses the engine's own
     // metrics: its suffix is the ORDINARY car-profile time, and two travel
     // times on one line is worse than either alone.

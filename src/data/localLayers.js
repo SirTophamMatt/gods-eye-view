@@ -247,13 +247,50 @@ const passiveMonitorRoads = createLocalGeoJsonLayer({
   labelGridPx: 140,
 });
 
+/**
+ * Flood-gauge styling by classification.
+ *
+ * The layer is 319 gauges of which, on a normal day, three are above their
+ * flood level. Drawn as one uniform field of blue dots, the three that matter
+ * are the three you cannot find — the layer answers "where are the gauges"
+ * when the question is "which ones are up".
+ *
+ * Colours are Passive Monitor's own warning palette, the same one the
+ * escalation ladder uses, so a gauge at Moderate reads as the same orange as a
+ * Watch and Act. Size carries the same signal redundantly, because at a
+ * state-wide camera a 9 px dot and a 14 px dot separate long before their hues
+ * do — and because colour alone excludes anyone who cannot distinguish these
+ * hues.
+ *
+ * Below-flood gauges get SMALLER than the old uniform 10 px rather than
+ * staying put: they are context, and 316 of them at full size is the wall the
+ * three signals have to compete with.
+ */
+const FLOOD_SEVERITY_STYLE = Object.freeze({
+  0: { color: '#2ea8ff', pixelSize: 8 }, // Below flood level — water blue
+  1: { color: '#e6c700', pixelSize: 14 }, // Minor — PM Advice yellow
+  2: { color: '#ff7f0e', pixelSize: 17 }, // Moderate — PM Watch and Act orange
+  3: { color: '#d62728', pixelSize: 20 }, // Major — PM Emergency Warning red
+});
+
+/**
+ * @param {object} props Gauge feature properties.
+ * @returns {{color: string, pixelSize: number}} Style for this gauge.
+ */
+function floodGaugeStyle(props) {
+  const severity = Number(props?.severity);
+  return FLOOD_SEVERITY_STYLE[Number.isFinite(severity) ? severity : 0]
+    || FLOOD_SEVERITY_STYLE[0];
+}
+
 const passiveMonitorFlood = createLocalGeoJsonLayer({
   id: 'local-pm-flood',
   url: passiveMonitorSource('pm-flood', pmFloodUrl),
   name: 'PM Flood Gauges',
-  color: '#2ea8ff', // Water blue
+  color: '#2ea8ff', // Water blue — the layer chip and the below-flood majority
   icon: '▼',
   source: PM_SOURCE_LABEL,
+  styleFeature: floodGaugeStyle,
   labels: true,
   // The gauge network is the densest of the four — 300+ stations clustered over
   // one state — so it gets the widest collision grid to stay readable when the
@@ -388,8 +425,8 @@ const vicmapFrvResponse = createLocalGeoJsonLayer({
 });
 
 /**
- * Fire stations from the Vicmap gazetteer — 1,726 of them, and a quarter are
- * NOT Victorian: Vicmap covers the border overlap, so 334 NSW and 102 SA
+ * Fire stations from the Vicmap gazetteer — 1,705 of them, and a quarter are
+ * NOT Victorian: Vicmap covers the border overlap, so 334 NSW and 81 SA
  * brigades sit alongside the 1,288 VIC ones. Kept rather than filtered,
  * because near Nelson or Mallacoota the nearest brigade really is over the
  * line, and the layer name says so rather than overclaiming.
@@ -403,7 +440,7 @@ const vicmapFrvResponse = createLocalGeoJsonLayer({
  * app already spends its reds on the warning ladder — a station drawn in
  * CFA red would sit one hue away from an Emergency Warning on the same globe.
  *
- * The label budget is the tightest in the registry. 1,726 points over one
+ * The label budget is the tightest in the registry. 1,705 points over one
  * state is denser than any other layer here, and they cluster hardest around
  * Melbourne where the hazard cards already compete for room.
  */

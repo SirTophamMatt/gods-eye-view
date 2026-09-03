@@ -135,6 +135,39 @@ function normalizeFeature(feature) {
   }];
 }
 
+/**
+ * Coordinate precision at which two same-named records are the same station.
+ *
+ * 3 decimal places ≈ 110 m. The gazetteer carries 29 repeated names; 24 of
+ * those pairs sit within half a metre of each other and are plainly one
+ * station recorded twice, while the rest are genuinely different places that
+ * share a name — there are two Cooma fire stations 364 km apart, and an Eden
+ * pair 2.4 km apart that may well be two real stations. Rounding this coarsely
+ * collapses the first group and leaves the second alone.
+ *
+ * Left in the file, a duplicate costs one of the three slots in a "nearest
+ * brigades" answer and lists the same brigade twice.
+ */
+const DEDUPE_DECIMALS = 3;
+
+/**
+ * Drop records that repeat a name at (effectively) the same point.
+ * @param {object[]} features Normalized features.
+ * @returns {{kept: object[], dropped: number}}
+ */
+function dedupe(features) {
+  const seen = new Set();
+  const kept = [];
+  for (const feature of features) {
+    const [lon, lat] = feature.geometry.coordinates;
+    const key = `${feature.properties.name}|${lon.toFixed(DEDUPE_DECIMALS)}|${lat.toFixed(DEDUPE_DECIMALS)}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    kept.push(feature);
+  }
+  return { kept, dropped: features.length - kept.length };
+}
+
 async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   console.log(`Vicmap fire stations → ${OUT_DIR}`);
@@ -145,15 +178,18 @@ async function main() {
     where: WHERE,
     onRetry: (message) => console.warn(`    ${message}`),
   });
-  const features = raw.flatMap(normalizeFeature);
+  const { kept: features, dropped: duplicates } = dedupe(raw.flatMap(normalizeFeature));
   const body = features.map((f) => JSON.stringify(f)).join('\n');
   const file = resolve(OUT_DIR, 'vicmap-fire-station.geojsonl');
   writeFileSync(file, features.length ? `${body}\n` : '', 'utf8');
 
-  const dropped = raw.length - features.length;
+  const dropped = raw.length - features.length - duplicates;
   console.log(
     `  fire-station   ${String(features.length).padStart(5)} stations`
-    + `${dropped ? ` (${dropped} placeholder/geometryless dropped)` : ''}`
+    + `${dropped ? ` (${dropped} placeholder/geometryless` : ''}`
+    + `${dropped && duplicates ? `, ${duplicates} duplicate` : ''}`
+    + `${!dropped && duplicates ? ` (${duplicates} duplicate` : ''}`
+    + `${dropped || duplicates ? ' dropped)' : ''}`
     + `  ${(Buffer.byteLength(body, 'utf8') / 1024).toFixed(0)} KB`,
   );
 

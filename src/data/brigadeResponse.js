@@ -23,7 +23,7 @@ const loadFrvArea = createFrvAreaLoader(frvResponseUrl);
  *              drive time computed from a line through paddocks.
  *
  * The ranking stays straight-line even though road distances get fetched. It
- * is what is always available, it is what 1,726 candidates can be sorted by
+ * is what is always available, it is what 1,705 candidates can be sorted by
  * without routing any of them, and re-sorting the three afterwards would make
  * the list disagree with the count that produced it. The road figures are
  * shown, not ranked on — and they routinely disagree with the air ordering,
@@ -73,7 +73,11 @@ export async function nearestBrigades(origin, count = 3, fetchImpl = globalThis.
   // requests a minute and a runaway here would spend that budget on one click.
   const routed = await Promise.all(
     withBadges.slice(0, MAX_ROUTE_REQUESTS).map(async (station) => {
-      const route = await fetchRoute(origin, station, fetchImpl);
+      // Station → incident, which is the direction an appliance actually
+      // travels. Not cosmetic: OSRM routes are direction-dependent, so
+      // one-way streets, turn restrictions and divided carriageways can give
+      // the reverse trip a different path and a different time.
+      const route = await fetchRoute(station, origin, fetchImpl);
       if (!route) return station;
       const code1 = code1Duration(route);
       return {

@@ -65,6 +65,7 @@ Static datasets shipped in the repo for an out-of-the-box experience. **None are
 | **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **Natural Earth physical regions** (1,046 land + 292 marine named polygons) | `natural_earth/` | **Public domain** | ✅ (no restrictions) | "Made with Natural Earth" (courtesy credit — not legally required) |
 | **DataSF Analysis Neighborhoods** (41 SF neighborhood polygons) | `neighborhoods/` | **PDDL 1.0** (public domain) | ✅ (no restrictions) | "City & County of San Francisco — DataSF" (courtesy — not legally required) |
+| **Vicmap fire stations** (1,726 CFA/FRV stations) | `vicmap-emergency/` | **CC BY 4.0** | ✅ (attribution required) | "Vicmap Features of Interest © State of Victoria (DEECA)" |
 | **Vicmap Admin boundaries** (7 layers, 221 polygon parts: LGA, CFA district, CFA total fire ban district, DELWP region, EMV region, FRV district, FRV response area) | `vicmap-admin/` | **CC BY 4.0** | ✅ (attribution required) | "Vicmap Admin © State of Victoria (DEECA)" |
 
 ### ⚠️ TeleGeography is bundled but NonCommercial

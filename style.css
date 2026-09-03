@@ -9365,6 +9365,67 @@ body.scene-playback-mode #first-run-launcher {
   color: var(--text-dim);
 }
 
+/* Nearest-brigades action. Deliberately not accented like .pm-detail-link:
+   that link leads OUT to the authoritative warning and earns the emphasis,
+   while this runs a local lookup and should not compete with it. */
+.pm-detail-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.pm-detail-action {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  color: var(--text-primary);
+  background: transparent;
+  border: 1px solid var(--glass-border);
+  border-radius: 3px;
+  padding: 6px 11px;
+  cursor: pointer;
+  transition: border-color var(--transition-fast), color var(--transition-fast);
+}
+
+.pm-detail-action:hover:not(:disabled) {
+  border-color: var(--pm-detail-accent, var(--accent));
+  color: var(--pm-detail-accent, var(--accent));
+}
+
+.pm-detail-action:disabled {
+  cursor: default;
+  color: var(--text-dim);
+}
+
+.pm-detail-brigades {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: 12px;
+}
+
+/* The brigade rows reuse .pm-detail-row, whose 96px first column is sized for
+   a LABEL. Here the name comes first and the distance second, so the columns
+   invert: the name takes the space and the distance sits in a fixed gutter. */
+.pm-detail-brigades .pm-detail-row {
+  grid-template-columns: 1fr 64px;
+}
+
+.pm-detail-brigades .pm-detail-label {
+  text-align: right;
+}
+
+.pm-detail-brigade-head {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  padding-top: 12px;
+  border-top: 1px solid var(--glass-border);
+}
+
 /* On a narrow viewport the panel becomes a bottom sheet: a 420px column
    pinned right would cover the map it is describing. */
 @media (max-width: 720px) {

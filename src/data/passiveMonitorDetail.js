@@ -22,8 +22,25 @@
  * the authoritative warning rather than pretending the excerpt is complete.
  */
 
+import { formatDistanceKm } from './nearestStations.js';
+
 const PANEL_ID = 'pm-detail-panel';
 const LAYER_PREFIX = 'local-pm-';
+
+/**
+ * Hazards for which "nearest fire stations" is a sensible thing to ask.
+ *
+ * An allow-list of the fire-adjacent hazards rather than a deny-list of the
+ * rest: a new hazard type should arrive WITHOUT the button until someone
+ * decides it belongs, which is the safe direction. A flood gauge, a power
+ * outage, a radar cell and a BoM district product all get nothing — a brigade
+ * distance beside a river height is noise pretending to be intelligence.
+ *
+ * `incident` covers rescues as well as fires, and that is deliberate: CFA
+ * brigades do road rescue, so the nearest stations are relevant there too.
+ */
+const BRIGADE_HAZARDS = new Set(['incident', 'burn-area', 'warning']);
+const BRIGADE_COUNT = 3;
 
 /**
  * Severity accent, matching Passive Monitor's own warning palette
@@ -47,6 +64,49 @@ let _panel = null;
 let _selectedHandler = null;
 let _clearedHandler = null;
 let _keyHandler = null;
+
+/**
+ * Injected collaborators for the brigade action, so this module keeps its
+ * only-a-renderer shape and the tests need neither a globe nor a network.
+ * `main.js` never sets these — the defaults below are the real path.
+ */
+let _findNearest = null;
+let _annotations = () => window.__gevAnnotations || null;
+
+/**
+ * Resolve the station lookup, importing it on first use.
+ *
+ * Dynamic rather than a top-level import for two reasons. It keeps the
+ * gazetteer's module (and its bundled asset URL) out of the path every page
+ * load walks, when most sessions never click this button. And it keeps THIS
+ * module free of Vite-only `?url` syntax, so the panel logic is loadable — and
+ * therefore testable — under plain Node.
+ */
+async function findNearest(origin, count) {
+  if (_findNearest) return _findNearest(origin, count);
+  const { findNearestFireStations } = await import('./fireStationLookup.js');
+  return findNearestFireStations(origin, count);
+}
+
+/** Swap the brigade-action collaborators. Tests only. */
+export function _setBrigadeDepsForTest({ findNearest: find, annotations } = {}) {
+  _findNearest = find || null;
+  _annotations = annotations || (() => window.__gevAnnotations || null);
+}
+
+/**
+ * Whether this record should offer the nearest-brigades action.
+ * @param {object} props Unwrapped feature properties.
+ * @param {object} record Context-store record (carries the position).
+ * @returns {boolean}
+ */
+export function offersBrigadeAction(props, record) {
+  if (!BRIGADE_HAZARDS.has(text(props?.hazard))) return false;
+  // No position, no proximity question. Warning EXTENT features can arrive
+  // without a usable centroid, and a button that silently does nothing is
+  // worse than no button.
+  return Number.isFinite(record?.latitude) && Number.isFinite(record?.longitude);
+}
 
 function text(value) {
   if (value === null || value === undefined) return '';
@@ -184,6 +244,12 @@ export function renderPassiveMonitorDetail(record) {
           ${row('Source', props.source)}
         </div>
 
+        ${offersBrigadeAction(props, record) ? `
+        <div class="pm-detail-actions">
+          <button type="button" class="pm-detail-action" data-action="brigades">Nearest brigades</button>
+        </div>
+        <div class="pm-detail-brigades" hidden></div>` : ''}
+
         ${url ? `<a class="pm-detail-link" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open full warning &#x2197;</a>` : ''}
         ${headline.endsWith('...') || headline.endsWith('…')
           ? '<p class="pm-detail-note">Text truncated by the VicEmergency feed at source.</p>'
@@ -193,7 +259,127 @@ export function renderPassiveMonitorDetail(record) {
 
   panel.hidden = false;
   panel.querySelector('.pm-detail-close')?.addEventListener('click', hidePassiveMonitorDetail);
+  panel.querySelector('[data-action="brigades"]')?.addEventListener('click', (event) => {
+    showNearestBrigades(panel, {
+      latitude: record.latitude,
+      longitude: record.longitude,
+    }, event.currentTarget);
+  });
   return true;
+}
+
+/**
+ * Resolve, list, and draw the nearest brigades for one incident.
+ *
+ * Exported for the tests, which drive it against a stub rather than the real
+ * snapshot and annotation engine.
+ *
+ * @param {HTMLElement} panel The open detail panel.
+ * @param {{latitude: number, longitude: number}} origin Incident position.
+ * @param {HTMLButtonElement} button The clicked control.
+ * @returns {Promise<void>}
+ */
+export async function showNearestBrigades(panel, origin, button) {
+  const out = panel.querySelector('.pm-detail-brigades');
+  if (!out) return;
+
+  // Re-entrancy guard. The snapshot fetch is ~374 KB on first use, and without
+  // this a second click during that window runs the whole action twice and
+  // appends a second set of lines under the first.
+  if (button?.disabled) return;
+  if (button) {
+    button.disabled = true;
+    button.textContent = 'Finding…';
+  }
+  out.hidden = false;
+  out.innerHTML = '<p class="pm-detail-note">Searching the station gazetteer…</p>';
+
+  try {
+    const stations = await findNearest(origin, BRIGADE_COUNT);
+    if (stations.length === 0) {
+      out.innerHTML = '<p class="pm-detail-note">No fire stations found near this position.</p>';
+      return;
+    }
+
+    out.innerHTML = `
+      <div class="pm-detail-brigade-head">Nearest ${stations.length === 1 ? 'station' : `${stations.length} stations`}</div>
+      ${stations.map((station) => `
+        <div class="pm-detail-row">
+          <span class="pm-detail-value">${escapeHtml(station.name)}</span>
+          <span class="pm-detail-label">${escapeHtml(formatDistanceKm(station.distanceKm))}</span>
+        </div>`).join('')}
+      <p class="pm-detail-note">Straight-line distance. Not a dispatch — Victoria turns out brigades by response area, not proximity.</p>`;
+
+    drawBrigadeLines(origin, stations);
+  } catch (error) {
+    // The gazetteer is bundled with the build, so a failure here is a broken
+    // install rather than a slow network — say so instead of offering a retry
+    // that will fail the same way.
+    out.innerHTML = `<p class="pm-detail-note">Station list unavailable (${escapeHtml(String(error?.message || 'unknown error'))}).</p>`;
+  } finally {
+    if (button) {
+      button.disabled = false;
+      button.textContent = 'Nearest brigades';
+    }
+  }
+}
+
+/**
+ * Draw one road route from the incident to each station.
+ *
+ * `route` is street-following, not a straight line: the engine sends the
+ * endpoints to the /api/route proxy and draws the real path, appending its
+ * distance and travel time to the label. That makes the lines strictly better
+ * than the panel's straight-line ranking — they answer the road question the
+ * panel copy has to disclaim — and when routing is unavailable the engine
+ * degrades to a segment labelled "direct line (no route)" rather than passing
+ * one off as a route.
+ *
+ * `mode: 'car'` matters. The engine defaults to walking, which labelled every
+ * brigade line with an "X min walk" — a pedestrian travel time on a fire
+ * response, which is not merely useless but misleading. An appliance drives.
+ *
+ * Best-effort by design: the list in the panel is the answer, and the lines are
+ * the illustration. If the annotation engine is not up yet (the panel can open
+ * before it initialises) the reader still gets the names and distances.
+ *
+ * `clearPrevious` is all-or-nothing because the engine has no scoped clear —
+ * only `clear()` and `fadeOutAll()`, both global. So this does what the voice
+ * tool does and replaces the whole annotation set, which costs any marks the
+ * user had up. The alternative is worse: without it, clicking a second
+ * incident leaves three lines pointing at the first one, and nothing on screen
+ * says which fire they belong to. If scoped removal ever lands, this should
+ * take a group id and drop only its own lines.
+ *
+ * Green matches the station layer, and for the same reason: it reads as
+ * resource rather than hazard.
+ *
+ * @param {{latitude: number, longitude: number}} origin Incident position.
+ * @param {object[]} stations Nearest stations with `distanceKm`.
+ */
+function drawBrigadeLines(origin, stations) {
+  const engine = _annotations();
+  if (!engine?.annotate) return;
+  try {
+    engine.annotate(stations.map((station) => ({
+      type: 'route',
+      color: 'green',
+      mode: 'car',
+      // Name only. A `route` is street-following, and the engine appends its
+      // own "— 4.2 km · 8 min drive" from the ROUTED geometry — so adding the
+      // straight-line distance here would print two different numbers for the
+      // same trip in one label. The panel keeps the straight-line figures
+      // because they are what the ranking is based on and they are always
+      // available; the line carries the road answer when routing resolves.
+      label: station.name,
+      points: [
+        { latitude: origin.latitude, longitude: origin.longitude },
+        { latitude: station.latitude, longitude: station.longitude },
+      ],
+    })), { clearPrevious: true, persist: true });
+  } catch {
+    /* the panel already carries the answer */
+  }
 }
 
 /** Hide the panel and drop its contents. */

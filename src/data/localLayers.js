@@ -43,6 +43,7 @@ import vicDelwpRegionUrl from './local_data/vicmap-admin/vicmap-delwp-region.geo
 import vicEmvRegionUrl from './local_data/vicmap-admin/vicmap-emv-region.geojsonl?url';
 import vicFrvDistrictUrl from './local_data/vicmap-admin/vicmap-frv-district.geojsonl?url';
 import vicFrvResponseUrl from './local_data/vicmap-admin/vicmap-frv-response.geojsonl?url';
+import vicFireStationUrl from './local_data/vicmap-emergency/vicmap-fire-station.geojsonl?url';
 
 /**
  * Registry of local GeoJSON datasets.
@@ -386,6 +387,35 @@ const vicmapFrvResponse = createLocalGeoJsonLayer({
   labelMax: 12,
 });
 
+/**
+ * Victorian fire stations — 1,726 CFA and FRV stations from the Vicmap
+ * gazetteer.
+ *
+ * A point layer, so it needs none of the boundary machinery above: the
+ * stem-and-point presentation the datacenters layer has always used is exactly
+ * right for "a thing is HERE".
+ *
+ * Green, not red, and that is the whole reasoning. Standard emergency-
+ * management convention reads red as hazard and green as resource, and this
+ * app already spends its reds on the warning ladder — a station drawn in
+ * CFA red would sit one hue away from an Emergency Warning on the same globe.
+ *
+ * The label budget is the tightest in the registry. 1,726 points over one
+ * state is denser than any other layer here, and they cluster hardest around
+ * Melbourne where the hazard cards already compete for room.
+ */
+const vicmapFireStation = createLocalGeoJsonLayer({
+  id: 'local-vicmap-fire-station',
+  url: vicFireStationUrl,
+  name: 'VIC Fire Stations',
+  color: '#2ecc71',
+  icon: '⌂',
+  source: 'Vicmap FOI',
+  labels: true,
+  labelMax: 90,
+  labelGridPx: 165,
+});
+
 export default [
   datacenters,
   dams,
@@ -412,4 +442,6 @@ export default [
   vicmapEmvRegion,
   vicmapFrvDistrict,
   vicmapFrvResponse,
+  // Resources, after the boundaries that dispatch them.
+  vicmapFireStation,
 ];

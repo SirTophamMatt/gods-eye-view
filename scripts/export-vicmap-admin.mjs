@@ -51,27 +51,15 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { fetchArcgisLayer, roundPoint } from './lib/vicmap-arcgis.mjs';
+
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = resolve(HERE, '../src/data/local_data/vicmap-admin');
 
 const SERVICE
   = 'https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Admin/FeatureServer';
 
-/** Server's own ceiling is 2000, but a generalised 2000-feature page times out. */
-const PAGE_SIZE = 500;
 const DEFAULT_TOLERANCE = 0.001;
-/**
- * Generalising a dissolved region boundary is genuinely expensive upstream —
- * a warm request for the CFA districts takes ~27 s — and a cold one sometimes
- * stalls well past that. Long timeout, and retry rather than fail the run:
- * this is a public service with no SLA, and losing an eight-layer export to
- * one cold cache means re-fetching the seven layers that already worked.
- */
-const REQUEST_TIMEOUT_MS = 180_000;
-const REQUEST_ATTEMPTS = 3;
-const RETRY_BACKOFF_MS = 5_000;
-/** Coordinate decimals kept on the wire. 5 dp ≈ 1 m — finer than any tolerance. */
-const COORD_DECIMALS = 5;
 
 const SOURCE = 'Vicmap Admin';
 
@@ -202,85 +190,6 @@ function parseArgs(argv) {
   return args;
 }
 
-/**
- * One page of a layer's features as GeoJSON.
- * @param {number} layer FeatureServer layer id.
- * @param {number} offset Result offset.
- * @param {number} tolerance `maxAllowableOffset` in degrees.
- * @returns {Promise<object>} Parsed FeatureCollection.
- */
-async function fetchPage(layer, offset, tolerance) {
-  const params = new URLSearchParams({
-    where: '1=1',
-    outFields: '*',
-    outSR: '4326',
-    returnGeometry: 'true',
-    resultOffset: String(offset),
-    resultRecordCount: String(PAGE_SIZE),
-    f: 'geojson',
-  });
-  // Offset 0 means "no generalisation" to ArcGIS, so omit it rather than
-  // sending a value the server would silently treat as full resolution.
-  if (tolerance > 0) params.set('maxAllowableOffset', String(tolerance));
-
-  const url = `${SERVICE}/${layer}/query?${params}`;
-  let lastError = null;
-  for (let attempt = 1; attempt <= REQUEST_ATTEMPTS; attempt += 1) {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    try {
-      const response = await fetch(url, { signal: controller.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = await response.json();
-      // ArcGIS reports failure with HTTP 200 and an `error` object, so a status
-      // check alone would hand an empty FeatureCollection to the writer and
-      // silently truncate the layer.
-      if (body?.error) {
-        throw new Error(`ArcGIS ${body.error.code}: ${body.error.details?.join('; ') || body.error.message || 'unknown'}`);
-      }
-      return body;
-    } catch (error) {
-      lastError = error;
-      if (attempt < REQUEST_ATTEMPTS) {
-        console.warn(`    retry ${attempt}/${REQUEST_ATTEMPTS - 1} after ${error.message}`);
-        await new Promise((done) => { setTimeout(done, RETRY_BACKOFF_MS * attempt); });
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-  }
-  throw lastError;
-}
-
-/**
- * Every feature of a layer, paged until the server stops saying there is more.
- * @param {number} layer FeatureServer layer id.
- * @param {number} tolerance `maxAllowableOffset` in degrees.
- * @returns {Promise<object[]>} GeoJSON features.
- */
-async function fetchLayer(layer, tolerance) {
-  const features = [];
-  for (let offset = 0; ; offset += PAGE_SIZE) {
-    const page = await fetchPage(layer, offset, tolerance);
-    const batch = Array.isArray(page?.features) ? page.features : [];
-    features.push(...batch);
-    // `exceededTransferLimit` rides on `properties` for f=geojson (it is a
-    // top-level flag for f=json), and a short page is the other terminator.
-    const more = page?.properties?.exceededTransferLimit === true
-      || page?.exceededTransferLimit === true;
-    if (!more || batch.length === 0) break;
-  }
-  return features;
-}
-
-/** Round one coordinate pair; drops the z ArcGIS sometimes appends. */
-function roundPoint(point) {
-  return [
-    Number(Number(point[0]).toFixed(COORD_DECIMALS)),
-    Number(Number(point[1]).toFixed(COORD_DECIMALS)),
-  ];
-}
-
 function roundRing(ring) {
   return ring.map(roundPoint);
 }
@@ -358,7 +267,12 @@ function normalizeFeature(feature, spec) {
 }
 
 async function exportLayer(spec, tolerance) {
-  const raw = await fetchLayer(spec.layer, tolerance);
+  const raw = await fetchArcgisLayer({
+    service: SERVICE,
+    layer: spec.layer,
+    tolerance,
+    onRetry: (message) => console.warn(`    ${message}`),
+  });
   const features = raw.flatMap((feature) => normalizeFeature(feature, spec));
   const body = features.map((f) => JSON.stringify(f)).join('\n');
   const file = resolve(OUT_DIR, `vicmap-${spec.key}.geojsonl`);

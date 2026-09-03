@@ -314,6 +314,7 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   Object.freeze({ id: 'local-vicmap-cfa-tfb', token: '4', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-vicmap-delwp-region', token: '5', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-vicmap-emv-region', token: '6', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-fire-station', token: '0', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-vicmap-frv-district', token: '7', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-vicmap-frv-response', token: '8', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-vicmap-lga', token: '9', disposition: 'enabled-only' }),

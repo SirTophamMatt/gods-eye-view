@@ -181,6 +181,17 @@ export const DATA_CREDITS = [
       '(CC BY 4.0)',
   },
   {
+    // Same licence and same publisher as the boundaries above, different
+    // product — kept as its own entry because the two are separately
+    // removable: delete `vicmap-emergency/` and this credit goes with it.
+    key: 'vicmap-foi',
+    html:
+      'Victorian fire stations: ' +
+      '<a href="https://discover.data.vic.gov.au/dataset/vicmap-features-of-interest-rest-api" target="_blank" rel="noopener">Vicmap Features of Interest</a> ' +
+      '© State of Victoria (Department of Energy, Environment and Climate Action) ' +
+      '(CC BY 4.0)',
+  },
+  {
     key: 'telegeography',
     html:
       'Submarine cables: © TeleGeography — ' +

@@ -239,6 +239,21 @@ Vicmap Admin is **CC BY 4.0**. Attribution is a condition of use, not a
 courtesy, and it is carried in `DATA_CREDITS` (`src/data/dataCredits.js`).
 Do not remove it.
 
+The `VIC Fire Stations` layer is the same arrangement from a different Vicmap
+product, and refreshes the same way:
+
+```bash
+node scripts/export-vicmap-emergency.mjs
+git add src/data/local_data/vicmap-emergency
+git commit -m "Refresh Vicmap fire stations"
+git push
+```
+
+That file has a second consumer besides its layer: the detail panel's **Nearest
+brigades** action reads it directly, so it answers whether or not the layer is
+switched on. Deleting the snapshot therefore removes the button's data as well
+as the layer's — both fail visibly rather than silently, but they fail together.
+
 ## Streaming live from Passive Monitor
 
 The snapshots are the default. To read live instead, point this app at a Passive

@@ -40,6 +40,24 @@ const GROUND_SAMPLE_MAX_ABS_HEIGHT_M = 9000;
  * 30 × 2 s ≈ 60 s, far longer than a tile stream-in.
  */
 export const GROUND_SAMPLE_MAX_ARMED_RETRIES = 30;
+/**
+ * Fill alpha for `outlineOnly` layers. Hazard polygons sit at 0.3 because
+ * there are a handful of them and each one is the point; boundary polygons
+ * tessellate a whole state, so their fill is only ever a faint region wash and
+ * a pick surface — the outline carries the meaning. Three boundary layers
+ * stacked still tint the globe less than one hazard polygon does.
+ */
+const BOUNDARY_FILL_ALPHA = 0.05;
+/** Ground-clamped boundary stroke, in pixels. */
+const BOUNDARY_OUTLINE_WIDTH_PX = 2;
+/**
+ * Camera framing when a boundary is clicked: fill the view with the region
+ * rather than diving to the fixed 5 km a point feature gets. A click on an
+ * LGA means "show me this LGA", and 5 km over the centroid of Mildura Rural
+ * City shows a paddock.
+ */
+const BOUNDARY_FRAMING_RADIUS_SCALE = 2.2;
+const BOUNDARY_MIN_FRAMING_HEIGHT_M = 5000;
 /** Ignore sub-metre camera-derived stem-tip noise at camera settle. */
 export const LOCAL_STEM_TIP_EPSILON_M = 0.5;
 const LOCAL_STEM_TIP_EPSILON_SQ = LOCAL_STEM_TIP_EPSILON_M ** 2;
@@ -90,12 +108,17 @@ export function localInfrastructureOverlayCopy(properties, layerId) {
     if (river && river.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
       details.push(clampCardLine(river));
     }
-  } else if (layerId.startsWith('local-pm-')) {
+  } else if (layerId.startsWith('local-pm-') || layerId.startsWith('local-vicmap-')) {
     // Passive Monitor exports a normalized (status, detail) pair on every
     // hazard, so one branch serves fire, flood, storm and power alike. `status`
     // is the operational state ("Watch and Act", "Minor"); `detail` is the
     // measurement context ("296 ha · 12 resources"). Both are pre-composed by
     // scripts/export-passive-monitor.mjs, and either may be absent.
+    //
+    // The Vicmap Admin boundary layers deliberately emit the SAME pair from
+    // scripts/export-vicmap-admin.mjs — status is the kind of unit ("Local
+    // government area"), detail its code ("LGA 328") — so the two exporters
+    // share this branch rather than each growing their own.
     const status = firstClean([props.status]);
     if (status && status.toLocaleLowerCase() !== title.toLocaleLowerCase()) {
       details.push(clampCardLine(status));
@@ -288,6 +311,14 @@ export function localDatasetError(error) {
  * A minimal, rock-solid native implementation for loading local GeoJSON Data.
  * Draws 3D stems (polylines) attached to Point entities and ensures
  * standard scene.pick natively clicks them.
+ *
+ * `outlineOnly` switches to the BOUNDARY presentation instead. The stem-and-
+ * point treatment says "a thing is HERE", which is right for a dam or an
+ * incident and wrong for an administrative region: a tessellating boundary set
+ * would grow one 2 km stem per council and paint the state opaque at the
+ * hazard-layer fill alpha. Boundary layers instead draw as a ground-clamped
+ * outline over a barely-there wash, with the label resting on the centroid.
+ * See BOUNDARY_FILL_ALPHA and the entity loop below.
  */
 export function createLocalGeoJsonLayer({
   id,
@@ -296,6 +327,7 @@ export function createLocalGeoJsonLayer({
   color,
   icon = '📍',
   source = 'Local JSONL',
+  outlineOnly = false,
   labels = true,
   labelMax = DEFAULT_LABEL_MAX,
   labelGridPx = DEFAULT_LABEL_GRID_PX,
@@ -488,7 +520,7 @@ export function createLocalGeoJsonLayer({
           loaded = await Cesium.GeoJsonDataSource.load(geojson, {
             clampToGround: true,
             stroke: baseColor,
-            fill: baseColor.withAlpha(0.3),
+            fill: baseColor.withAlpha(outlineOnly ? BOUNDARY_FILL_ALPHA : 0.3),
             strokeWidth: 2,
             markerSize: 8,
             markerColor: baseColor,
@@ -511,23 +543,34 @@ export function createLocalGeoJsonLayer({
           _count = entities.length;
           _stemRecords = [];
           _stemGeometryDirty = true;
-          
+          /**
+           * Hole rings awaiting their own stroke entity. Collected during the
+           * walk and added after it: `entities` is the live collection being
+           * iterated, and adding to it mid-loop would walk the additions.
+           * @type {Cesium.Cartesian3[][]}
+           */
+          const boundaryHoleRings = [];
+
           for (let i = 0; i < entities.length; i++) {
             const feature = entities[i];
             feature.__localLayerId = id; // Tag it so our click handler knows it belongs to this layer
             
             let pos = feature.position?.getValue(Cesium.JulianDate.now());
-            
+            /** Outer ring of a polygon feature — the boundary stroke's path. */
+            let outerRing = null;
+
             if (!pos) {
               // It's a polygon or line
               if (feature.polygon) {
                 feature.polygon.outline = true;
                 feature.polygon.outlineColor = baseColor;
-                
+
                 // Calculate center point for the stem
                 const hierarchy = feature.polygon.hierarchy?.getValue(Cesium.JulianDate.now());
                 if (hierarchy && hierarchy.positions && hierarchy.positions.length > 0) {
                   pos = Cesium.BoundingSphere.fromPoints(hierarchy.positions).center;
+                  outerRing = hierarchy.positions;
+                  if (outlineOnly) collectHoleRings(hierarchy, boundaryHoleRings);
                 }
               }
             }
@@ -536,7 +579,8 @@ export function createLocalGeoJsonLayer({
 
             const carto = Cesium.Cartographic.fromCartesian(pos);
             const groundHeight = 0; // Ellipsoid surface until a scene sample lands
-            const tipHeight = 2000; // Initial Stem height
+            // Boundary labels rest on the centroid; only stems climb.
+            const tipHeight = outlineOnly ? groundHeight : 2000; // Initial Stem height
 
             const base = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, groundHeight);
             const tip = Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, tipHeight);
@@ -561,22 +605,47 @@ export function createLocalGeoJsonLayer({
             // Constant properties are refreshed on the existing 450 ms source
             // cadence. Cesium no longer evaluates 2-3 callbacks per entity on
             // every frame, while the point/stem pick surface stays native.
-            feature.position = tip;
             const stemPositionBuffers = [[base, tip], [base, tip]];
-            feature.polyline = new Cesium.PolylineGraphics({
-              positions: stemPositionBuffers[0],
-              width: 3.5,
-              material: new Cesium.ColorMaterialProperty(baseColor),
-            });
-            feature.point = new Cesium.PointGraphics({
-              pixelSize: 10,
-              color: baseColor,
-              outlineColor: Cesium.Color.BLACK,
-              outlineWidth: 2,
-              // Never depth-cull the anchor against the photoreal mesh —
-              // globe-horizon culling is handled by the pre-render occluder.
-              disableDepthTestDistance: Number.POSITIVE_INFINITY,
-            });
+            if (outlineOnly) {
+              // A ground-clamped polygon draws NO outline: Cesium classifies
+              // the fill onto the terrain and drops `polygon.outline` entirely,
+              // which is why the boundary is stroked as its own ground-clamped
+              // polyline over the outer ring rather than by setting a width on
+              // the polygon above.
+              if (outerRing) {
+                feature.polyline = new Cesium.PolylineGraphics({
+                  positions: outerRing,
+                  width: BOUNDARY_OUTLINE_WIDTH_PX,
+                  clampToGround: true,
+                  material: new Cesium.ColorMaterialProperty(baseColor),
+                });
+              }
+              // Hole rings were collected above and are stroked after this
+              // loop. It is tempting to skip them on the theory that a hole in
+              // one region is the outer ring of its neighbour — but that is
+              // not true of the real data: an enclave can sit in a layer that
+              // does not tessellate (the FRV districts have four), and even
+              // where a neighbour does exist, generalisation simplifies its
+              // outer ring and the hole ring independently, so the two traces
+              // diverge. Skipping them leaves visible gaps in the border
+              // around alpine resorts and enclave councils.
+            } else {
+              feature.position = tip;
+              feature.polyline = new Cesium.PolylineGraphics({
+                positions: stemPositionBuffers[0],
+                width: 3.5,
+                material: new Cesium.ColorMaterialProperty(baseColor),
+              });
+              feature.point = new Cesium.PointGraphics({
+                pixelSize: 10,
+                color: baseColor,
+                outlineColor: Cesium.Color.BLACK,
+                outlineWidth: 2,
+                // Never depth-cull the anchor against the photoreal mesh —
+                // globe-horizon culling is handled by the pre-render occluder.
+                disableDepthTestDistance: Number.POSITIVE_INFINITY,
+              });
+            }
 
             const priority = labelPriorityFromProperties(properties, id);
             _stemRecords.push({
@@ -589,7 +658,14 @@ export function createLocalGeoJsonLayer({
               stemPositionBuffers,
               stemPositionBufferIndex: 0,
               groundHeight,
-              groundSampled: false,
+              // A boundary has no stem to scale and nothing to lift onto the
+              // mesh — Cesium clamps its outline and fill to the terrain
+              // itself. Recording it as already-grounded is what keeps it out
+              // of the whole sample/retry/re-arm path, which would otherwise
+              // spend a distance check per record per walk, and arm frames on
+              // a parked camera, for records it can never change.
+              groundSampled: outlineOnly,
+              stemless: outlineOnly,
               lastGroundSampleMs: 0,
               priority,
               entry: labels ? createLocalInfrastructureOverlayEntry({
@@ -602,6 +678,24 @@ export function createLocalGeoJsonLayer({
               }) : null,
             });
           }
+
+          // Deliberately untagged (no `__localLayerId`) and deliberately not a
+          // stem record: an enclave border is a line to look at, not a feature
+          // to click or label — the enclave itself is a named feature of its
+          // own layer, and it owns the card. Untagged also means the click
+          // handler's layer test skips them, so picking one selects nothing
+          // rather than a context entry that was never registered.
+          for (const ring of boundaryHoleRings) {
+            loaded.entities.add({
+              polyline: {
+                positions: ring,
+                width: BOUNDARY_OUTLINE_WIDTH_PX,
+                clampToGround: true,
+                material: baseColor,
+              },
+            });
+          }
+
           // Setup finished — publish it.
           _dataSource = loaded;
           _lastUpdate = Date.now();
@@ -636,8 +730,20 @@ export function createLocalGeoJsonLayer({
               
               // We zoom to the surface base of the stem or the center of the polygon
               let targetPos = null;
-              
-              if (entity.polyline) {
+              /** Boundary extent, so the flight can frame the whole region. */
+              let framingRadius = 0;
+
+              if (outlineOnly) {
+                // Must come first: a boundary entity HAS a polyline (its
+                // outline), so the stem branch below would otherwise fly to an
+                // arbitrary vertex on the border instead of into the region.
+                const hierarchy = entity.polygon?.hierarchy?.getValue(Cesium.JulianDate.now());
+                if (hierarchy?.positions?.length > 0) {
+                  const sphere = Cesium.BoundingSphere.fromPoints(hierarchy.positions);
+                  targetPos = sphere.center;
+                  framingRadius = sphere.radius;
+                }
+              } else if (entity.polyline) {
                 // If it's a stem, fly to the base
                 const positions = entity.polyline.positions.getValue(Cesium.JulianDate.now());
                 if (positions && positions.length > 0) {
@@ -657,8 +763,15 @@ export function createLocalGeoJsonLayer({
                 // Disable interactions so Cesium doesn't magically cancel the flight
                 viewer.scene.screenSpaceCameraController.enableInputs = false;
                 
+                const flyHeight = framingRadius > 0
+                  ? Math.max(
+                    BOUNDARY_MIN_FRAMING_HEIGHT_M,
+                    framingRadius * BOUNDARY_FRAMING_RADIUS_SCALE,
+                  )
+                  : 5000;
+
                 viewer.camera.flyTo({
-                  destination: Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, 5000),
+                  destination: Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude, flyHeight),
                   duration: 1.5,
                   complete: () => { viewer.scene.screenSpaceCameraController.enableInputs = true; },
                   cancel: () => { viewer.scene.screenSpaceCameraController.enableInputs = true; },
@@ -699,7 +812,12 @@ export function createLocalGeoJsonLayer({
           for (let i = 0; i < _stemRecords.length; i++) {
             const record = _stemRecords[i];
             const wasGroundSampled = record.groundSampled;
-            if (refreshStemGeometry) {
+            if (record.stemless) {
+              // Boundary record: its anchor is fixed on the ground and its
+              // `polyline` is the outline ring, NOT a stem — running the stem
+              // updater here would overwrite that ring with a two-point stem
+              // and erase the border on the first camera move.
+            } else if (refreshStemGeometry) {
               updateLocalStemGeometry(viewer, record, now);
             } else if (canSampleGround && !record.groundSampled
               && now - record.lastGroundSampleMs >= GROUND_SAMPLE_RETRY_MS) {
@@ -805,6 +923,25 @@ function insertLocalCellContender(contenders, record) {
   if (contenders.length > LOCAL_OVERLAY_CELL_SURPLUS) contenders.length = LOCAL_OVERLAY_CELL_SURPLUS;
 }
 
+/**
+ * Flatten every hole ring of a polygon hierarchy into `out`.
+ *
+ * Recursive because a hierarchy nests: an island inside a lake inside an
+ * island is one hole holding another. Vicmap has no such case today, but the
+ * recursion costs a line and the alternative fails silently.
+ *
+ * @param {Cesium.PolygonHierarchy} hierarchy Polygon hierarchy to walk.
+ * @param {Cesium.Cartesian3[][]} out Accumulator of ring position arrays.
+ * @returns {Cesium.Cartesian3[][]} `out`, for chaining.
+ */
+export function collectHoleRings(hierarchy, out = []) {
+  for (const hole of hierarchy?.holes || []) {
+    if (hole?.positions?.length > 2) out.push(hole.positions);
+    collectHoleRings(hole, out);
+  }
+  return out;
+}
+
 function sampleLocalGroundHeight(viewer, record, now) {
   if (record.groundSampled || !viewer.scene.sampleHeightSupported) return false;
   if (now - record.lastGroundSampleMs < GROUND_SAMPLE_RETRY_MS) return false;
@@ -882,6 +1019,13 @@ function featureLabelFromProperties(props, layerId) {
 function labelPriorityFromProperties(props, layerId) {
   const tags = props.tags || {};
 
+  // An exporter that HAS the geometry can rank better than any property
+  // heuristic can. The Vicmap boundary export scores each part of a multipart
+  // region by its share of the region's area, so a council's mainland body
+  // outranks its sand islands for the one label the collision cell will take;
+  // every part otherwise carries identical properties and would tie.
+  if (Number.isFinite(props.priority)) return Number(props.priority);
+
   let score = 0;
   if (cleanLabel(props.name) || cleanLabel(tags.name)) score += 1000;
   if (cleanLabel(tags['name:en'])) score += 700;
@@ -935,5 +1079,8 @@ function clampCardLine(value) {
 function layerTitle(layerId) {
   if (layerId === 'local-datacenters') return 'Datacenter';
   if (layerId === 'local-dams') return 'Dam';
+  // Only ever a fallback: export-vicmap-admin.mjs drops an unnamed boundary
+  // rather than emitting one, so a Vicmap feature always carries `name`.
+  if (layerId.startsWith('local-vicmap-')) return 'Boundary';
   return 'Feature';
 }

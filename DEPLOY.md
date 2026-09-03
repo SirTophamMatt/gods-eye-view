@@ -286,6 +286,52 @@ pointing at it over the internal Docker network (`http://passivemonitor-app-1:80
 rather than back out through the public hostname — that skips the auth round trip
 and keeps the traffic on the box.
 
+## Streaming live brigade pages from PagerMon
+
+Off by default, and it stays off with no configuration change needed: the app
+never phones home to look for a PagerMon instance, and the pager toggle button
+does not even exist in the DOM unless one is configured. Standing one up needs
+its own receiver hardware (an RTL-SDR dongle on a paging frequency, decoded
+through `multimon-ng`) — this is not a data source you can point at someone
+else's public instance and expect to be welcome; ask the operator first, the
+same as for any other service that isn't yours.
+
+Once you have an instance:
+
+```bash
+PAGERMON_URL=http://localhost:3000
+PAGERMON_API_KEY=your-pagermon-api-key
+PAGERMON_BASIC_AUTH=viewer:your-password
+```
+
+Add whichever apply to the `.env` beside `docker-compose.yml` and pass them
+through in the compose `environment:` block. `PAGERMON_API_KEY` is only needed
+if the instance has `messages.apiSecurity` turned on — PagerMon ships with it
+**off** by default, so a stock install answers without one.
+`PAGERMON_BASIC_AUTH` is for an instance sitting behind its own Caddy
+basicauth, same shape as the Passive Monitor credential above. As with that
+proxy, **none of these three values reach the browser** — only a boolean does,
+via `PAGERMON_LIVE`, and that boolean is the only thing that decides whether
+the toggle button renders at all.
+
+Two things worth knowing:
+
+- **Polling, not PagerMon's websocket.** PagerMon pushes new messages over
+  socket.io, which is genuinely lower latency; this app polls
+  `/api/pagermon/messages` every 8 seconds instead, because every other proxy
+  in `vite.config.js` is hand-rolled HTTP middleware and a websocket upgrade
+  passthrough is different machinery nothing else here needs yet. A few
+  seconds of latency on a pager page does not justify being the first thing to
+  need it.
+- **A capcode that cannot be matched to a station is not hidden.** PagerMon's
+  `capcodes` table has no coordinates — the join to the Vicmap fire-station
+  gazetteer is done by normalising the brigade's name on both sides
+  (`src/data/capcodeStations.js`), which resolves ~99% of the real Victorian
+  network however an operator happens to have typed it in. The residue is
+  shown in the ticker anyway, marked, with a running "N unplaced" count in the
+  header — silently dropping an unmatched page would make a gap in the
+  gazetteer indistinguishable from a quiet night.
+
 ## Troubleshooting
 
 **Blocked request / "host is not allowed"** — the dev server only accepts a
@@ -307,6 +353,27 @@ station list, the straight-line distances and the FRV/CFA badges are all
 computed from bundled files and keep working without it; only the travel times
 drop out, and the lines fall back to a direct segment labelled "direct line (no
 route)" rather than passing a straight line off as a road route.
+
+**The PAGER toggle button never appears** — this is correct behaviour, not a
+fault, unless `PAGERMON_URL` is actually set. The button only renders when
+`PAGERMON_LIVE` stamped `true` at build time; a container built before the
+variable was added, or one that had it added after the image was built rather
+than before, needs a rebuild (`docker compose up -d --build`), not just a
+restart — the value is baked into the client bundle at build time, same as
+every other `import.meta.env.*` key in this app.
+
+**The ticker says "Connecting…" and never moves** — `/api/pagermon/messages`
+is not returning `HTTP 200`. Check `docker compose logs app` for the proxy's
+sanitized error (`upstream_unreachable`, `upstream_timeout`, or an HTTP status
+from PagerMon itself); a wrong `PAGERMON_API_KEY` on an instance with
+`apiSecurity` enabled looks like `upstream_error` with `status: 401`.
+
+**A page appears in the ticker with no map pin and an "unplaced" count that
+keeps climbing** — the capcode's `alias` did not normalise onto any station in
+the Vicmap gazetteer. This is shown, not hidden, by design: check the alias
+against `src/data/capcodeStations.js`'s `OVERRIDES` map and add a verified
+correction there if it is a real Victorian brigade the gazetteer names
+differently.
 
 **A `PM …` warning layer is empty** — this is usually correct, not a fault.
 `PM Emergency Warnings` and `PM Watch & Act` are empty whenever nothing is

@@ -9469,6 +9469,194 @@ body.scene-playback-mode #first-run-launcher {
   border-top: 1px solid var(--glass-border);
 }
 
+
+/* ── Pager mode — live brigade pages ──────────────────────────────
+   Self-contained chrome, not a layer-tray row or a panel-pin target: pager
+   mode has no persistent per-viewer state worth putting in a share link (a
+   link encoding "pager mode ON" means nothing to a viewer without the same
+   PagerMon instance behind them), so it gets its own fixed elements the way
+   clean-view-toggle does rather than joining the pinnable-panel system. */
+
+.pager-toggle {
+  position: fixed;
+  /* Bottom-right, anchored past the right rail's EXPANDED width — the exact
+     formula `.pm-detail-panel` already uses for the same reason (see its
+     `--pm-detail-gutter`). The rail (DISPLAY/CCTV/CONTEXT) renders in Normal
+     mode too, not only Cockpit, so `right: 36px` alone put this underneath
+     it. The left column is out for the same kind of reason: the Data
+     Layers/Scenes toolbar occupies it even collapsed. `bottom:230px` clears
+     hud-bottom-right, whose own fixed `bottom:180px` plus its content is
+     roughly 195px off the bottom edge at any window height. */
+  right: calc(var(--right-rail-x) + var(--display-panel-expanded-width) + 16px);
+  bottom: 230px;
+  z-index: 55;
+  padding: 6px 12px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius);
+  background: var(--glass-bg);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 1.6px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.pager-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--glass-border-hover);
+}
+
+.pager-toggle-active {
+  color: #ffb347;
+  border-color: color-mix(in srgb, #ffb347 45%, var(--glass-border));
+}
+
+.pager-ticker {
+  position: fixed;
+  /* Same rail-clearing gutter as the toggle button just above it, and the
+     same bottom anchor pm-detail-panel's TOP anchor mirrors: this sits below
+     where that panel usually is, so a click-to-read detail popup and a live
+     pager ticker are unlikely to both want the same few hundred pixels. */
+  right: calc(var(--right-rail-x) + var(--display-panel-expanded-width) + 16px);
+  bottom: 266px;
+  z-index: 55;
+  width: min(300px, calc(100vw - var(--right-rail-x) - var(--display-panel-expanded-width) - 32px));
+  max-height: min(300px, calc(100vh - 490px));
+  display: flex;
+  flex-direction: column;
+  background: var(--glass-bg);
+  border: 1px solid var(--glass-border);
+  border-left: 2px solid #ffb347;
+  border-radius: var(--panel-radius);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  font-family: var(--font-sans);
+  animation: pm-detail-in 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.pager-ticker[hidden] { display: none; }
+
+.pager-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--glass-border);
+  flex: none;
+}
+
+.pager-dot {
+  font-size: 9px;
+  line-height: 1;
+}
+
+.pager-dot-live { color: #5dff9f; }
+.pager-dot-down { color: var(--text-dim); }
+
+.pager-head-title {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 1.8px;
+  color: var(--text-primary);
+}
+
+.pager-head-warn {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  color: #ffb347;
+  white-space: nowrap;
+}
+
+/* When the warning is present it displaces the close button's auto margin,
+   so the close button gets its own flex:none rather than relying on being
+   the last flex child. */
+.pager-head-warn + .pager-close { margin-left: 6px; }
+.pager-head-warn ~ .pager-close { flex: none; }
+
+.pager-close {
+  flex: none;
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--btn-radius);
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color var(--transition-fast), border-color var(--transition-fast);
+}
+
+.pager-close:hover {
+  color: var(--text-primary);
+  border-color: var(--glass-border-hover);
+}
+
+.pager-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.pager-empty {
+  padding: 16px 12px;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+}
+
+.pager-row {
+  display: grid;
+  grid-template-columns: 34px 1fr;
+  gap: 2px 10px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--glass-border);
+}
+
+.pager-row:last-child { border-bottom: none; }
+
+.pager-row-time {
+  grid-row: 1 / span 2;
+  align-self: start;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-dim);
+  padding-top: 1px;
+}
+
+.pager-row-brigade {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  color: var(--text-primary);
+  overflow-wrap: anywhere;
+}
+
+.pager-row-message {
+  grid-column: 2;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+
+/* An unresolved page — no gazetteer match for its capcode — reads the same
+   as any other row except for this marker. It must never look identical to a
+   placed page: silence here is what makes a gap in the station index look
+   like a quiet night. */
+.pager-row-unresolved .pager-row-brigade { color: var(--text-secondary); }
+
+.pager-row-unplaced {
+  margin-left: 5px;
+  color: #ffb347;
+  font-size: 9px;
+}
+
 /* On a narrow viewport the panel becomes a bottom sheet: a 420px column
    pinned right would cover the map it is describing. */
 @media (max-width: 720px) {

@@ -24,6 +24,7 @@ import { initAnnotations } from './annotations/index.js';
 import { initLogoGaze } from './logoGaze.js';
 import { initCockpitCloudEffects } from './cockpitCloudEffects.js';
 import { initPassiveMonitorDetail } from './data/passiveMonitorDetail.js';
+import { initPagerMode } from './pagerMode.js';
 import {
   installRenderGovernor,
   getRenderGovernorDiagnostics,
@@ -204,6 +205,11 @@ async function init() {
     // own and cannot affect selection for any other layer.
     initPassiveMonitorDetail();
 
+    // Live brigade pages from a PagerMon instance, if one is configured.
+    // Creates its own toggle chrome only when PAGERMON_LIVE is true, so a
+    // build with no instance configured gets nothing new on screen.
+    const pagerMode = initPagerMode();
+
     // If no share link state, open on the default location
     if (!styleManager.hasShareState) {
       loaderStatus.textContent = `Flying to ${DEFAULT_LOCATION.label}...`;
@@ -329,6 +335,7 @@ async function init() {
       cockpitCloudEffects,
       getRenderGovernorDiagnostics,
       requestRender: governorRequestRender,
+      pagerMode,
     };
     window.__godsEyeView.voiceCommands = initGevVoiceCommands({ viewer, styleManager, dataManager, sceneDirector, annotations });
 

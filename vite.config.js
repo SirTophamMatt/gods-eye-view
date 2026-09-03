@@ -7483,6 +7483,146 @@ function passiveMonitorProxy() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// PagerMon proxy — live brigade pages.
+//
+//   PAGERMON_URL         base origin of a PagerMon instance
+//   PAGERMON_API_KEY     optional; required when the instance sets
+//                        `messages.apiSecurity` (it defaults to FALSE upstream,
+//                        so a stock install reads without one)
+//   PAGERMON_BASIC_AUTH  optional "user:password" for an instance behind
+//                        Caddy basicauth, like the Passive Monitor one
+//
+// POLLING, not the websocket. PagerMon pushes new messages over socket.io, and
+// that is the lower-latency path — but these proxies are hand-rolled HTTP
+// middleware, and a websocket upgrade passthrough is a different piece of
+// machinery than anything else here uses. A few seconds of latency on a pager
+// page is not worth being the first thing in this file to need one. The
+// alternative upgrade is PagerMon's own SimpleWebhook plugin pushing to an
+// endpoint here, which trades the latency for an inbound write surface that
+// would have to be exempted from the deployment's basicauth.
+//
+// Unset PAGERMON_URL is a normal state: the pager mode simply reports itself
+// unavailable rather than erroring.
+// ---------------------------------------------------------------------------
+
+const PAGERMON_TIMEOUT_MS = 10_000;
+/** A page is a few hundred bytes; this only stops a wrong URL streaming on. */
+const PAGERMON_MAX_BYTES = 4 * 1024 * 1024;
+/** Upstream caps at `messages.maxLimit`, 120 by default. */
+const PAGERMON_MAX_LIMIT = 120;
+
+function pagermonBaseUrl() {
+  const raw = String(process.env.PAGERMON_URL || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+    return url.origin;
+  } catch {
+    return null;
+  }
+}
+
+function pagermonHeaders() {
+  const headers = { Accept: 'application/json' };
+  const key = String(process.env.PAGERMON_API_KEY || '').trim();
+  if (key) headers.apikey = key;
+  const credentials = String(process.env.PAGERMON_BASIC_AUTH || '').trim();
+  if (credentials.includes(':')) {
+    headers.Authorization = `Basic ${Buffer.from(credentials, 'utf8').toString('base64')}`;
+  }
+  return headers;
+}
+
+function createPagermonMiddleware() {
+  const sendJson = (res, status, body) => {
+    res.writeHead(status, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store',
+    });
+    res.end(JSON.stringify(body));
+  };
+
+  return async function pagermonProxyMiddleware(req, res) {
+    if (req.method !== 'GET') {
+      res.writeHead(405, { Allow: 'GET', 'Cache-Control': 'no-store' });
+      res.end();
+      return;
+    }
+
+    const base = pagermonBaseUrl();
+    if (!base) {
+      sendJson(res, 503, {
+        error: 'not_configured',
+        detail: 'Set PAGERMON_URL to stream live brigade pages.',
+      });
+      return;
+    }
+
+    const requestUrl = new URL(req.url || '/', 'http://localhost');
+    let upstreamPath = null;
+    if (requestUrl.pathname === '/messages') {
+      // Only `limit` is forwarded, clamped. Passing the caller's query through
+      // wholesale would let the browser steer an arbitrary upstream query.
+      const limit = Math.min(
+        PAGERMON_MAX_LIMIT,
+        Math.max(1, Number.parseInt(requestUrl.searchParams.get('limit') || '50', 10) || 50),
+      );
+      upstreamPath = `/api/messages?limit=${limit}`;
+    } else if (requestUrl.pathname === '/capcodes') {
+      upstreamPath = '/api/capcodes';
+    }
+    if (!upstreamPath) {
+      sendJson(res, 404, { error: 'unknown_route' });
+      return;
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), PAGERMON_TIMEOUT_MS);
+    try {
+      const upstream = await fetch(`${base}${upstreamPath}`, {
+        headers: pagermonHeaders(),
+        signal: controller.signal,
+      });
+      if (!upstream.ok) {
+        // Status only, never the body: a login wall answers with an HTML page
+        // that would land in JSON.parse as a parse error rather than as 401.
+        sendJson(res, 502, { error: 'upstream_error', status: upstream.status });
+        return;
+      }
+      const text = await upstream.text();
+      if (text.length > PAGERMON_MAX_BYTES) {
+        sendJson(res, 502, { error: 'upstream_too_large' });
+        return;
+      }
+      res.writeHead(200, {
+        'Content-Type': 'application/json; charset=utf-8',
+        'Cache-Control': 'no-store',
+      });
+      res.end(text);
+    } catch (error) {
+      sendJson(res, 504, {
+        error: error?.name === 'AbortError' ? 'upstream_timeout' : 'upstream_unreachable',
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+}
+
+function pagermonProxy() {
+  const middleware = createPagermonMiddleware();
+  const install = (server) => {
+    server.middlewares.use('/api/pagermon', middleware);
+  };
+  return {
+    name: 'pagermon-proxy',
+    configureServer: install,
+    configurePreviewServer: install,
+  };
+}
+
 /**
  * Main Vite configuration factory.
  *
@@ -7521,6 +7661,7 @@ export default defineConfig(({ mode }) => {
       openAiRealtimeProxy(),
       googlePlacesContextProxy(),
       passiveMonitorProxy(),
+      pagermonProxy(),
     ],
     server: {
       host: env.HOST || 'localhost',
@@ -7540,6 +7681,11 @@ export default defineConfig(({ mode }) => {
       // instance lives or how to authenticate to it.
       'import.meta.env.PASSIVE_MONITOR_LIVE': JSON.stringify(
         Boolean(passiveMonitorBaseUrl()),
+      ),
+      // Same contract for PagerMon: the boolean crosses, the origin and key
+      // never do. The pager mode reads this to decide whether to offer itself.
+      'import.meta.env.PAGERMON_LIVE': JSON.stringify(
+        Boolean(pagermonBaseUrl()),
       ),
     },
     build: {

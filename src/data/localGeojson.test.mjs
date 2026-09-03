@@ -9,6 +9,7 @@ import {
   createLocalGeoJsonLayer,
   createLocalInfrastructureOverlayEntry,
   createLocalInfrastructureOverlayPublisher,
+  collectHoleRings,
   localDatasetError,
   localInfrastructureOverlayCopy,
   selectLocalInfrastructureOverlayCohort,
@@ -44,15 +45,37 @@ class MockLayerEvent {
   }
 }
 
+/** The default harness feature: one dam polygon, stem-and-point presentation. */
+const HARNESS_DAM_FEATURE = {
+  type: 'Feature',
+  id: 'real-dam',
+  properties: { name: 'Runtime Dam', tags: { associated_river: 'Test River' } },
+  geometry: {
+    type: 'Polygon',
+    coordinates: [[
+      [-97.70, 30.20],
+      [-97.69, 30.20],
+      [-97.69, 30.21],
+      [-97.70, 30.20],
+    ]],
+  },
+};
+
 /**
  * @param {object} [options]
  * @param {boolean} [options.sampleHeightSupported] Scene height-sampling capability.
  * @param {Function} [options.sampleHeight] Initial scene.sampleHeight behavior
  *   (default: throws like a scene whose tiles are not sampleable yet).
+ * @param {string} [options.layerId] Layer id under test.
+ * @param {boolean} [options.outlineOnly] Boundary presentation instead of stems.
+ * @param {object} [options.feature] GeoJSON Feature the stubbed fetch serves.
  */
 async function createRealLocalLayerHarness({
   sampleHeightSupported = false,
   sampleHeight = () => { throw new Error('tiles not sampleable yet'); },
+  layerId = 'local-dams',
+  outlineOnly = false,
+  feature = HARNESS_DAM_FEATURE,
 } = {}) {
   const originalFetch = globalThis.fetch;
   const originalWindow = globalThis.window;
@@ -63,20 +86,7 @@ async function createRealLocalLayerHarness({
   globalThis.fetch = async () => ({
     ok: true,
     status: 200,
-    text: async () => JSON.stringify({
-      type: 'Feature',
-      id: 'real-dam',
-      properties: { name: 'Runtime Dam', tags: { associated_river: 'Test River' } },
-      geometry: {
-        type: 'Polygon',
-        coordinates: [[
-          [-97.70, 30.20],
-          [-97.69, 30.20],
-          [-97.69, 30.21],
-          [-97.70, 30.20],
-        ]],
-      },
-    }),
+    text: async () => JSON.stringify(feature),
   });
   globalThis.window = { dispatchEvent() {} };
   let sampleHeightImpl = sampleHeight;
@@ -116,10 +126,11 @@ async function createRealLocalLayerHarness({
     },
   };
   const layer = createLocalGeoJsonLayer({
-    id: 'local-dams',
+    id: layerId,
     url: '/runtime-dam.geojsonl',
     name: 'Runtime Dams',
     color: '#0088ff',
+    outlineOnly,
     overlayHost,
     projectToWindow: () => ({ x: 400, y: 300 }),
     screenSpaceEventHandlerFactory: () => ({
@@ -456,6 +467,224 @@ test('local infrastructure creates no native labels or per-frame geometry callba
   assert.match(source, /viewer\.camera\.moveEnd\.addEventListener/);
   assert.match(source, /if \(refreshStemGeometry\)/);
   assert.match(source, /now - _lastVisibilityUpdate < VISIBILITY_UPDATE_MS/);
+});
+
+// ─── Boundary presentation (`outlineOnly`) ───────────────────
+//
+// Administrative boundaries share the loader with the hazard/infrastructure
+// layers but not their presentation: they draw as a ground-clamped outline
+// with the label on the centroid, because a tessellating boundary set under
+// the stem-and-point treatment grows one 2 km stem per council.
+
+/** One Vicmap-shaped boundary feature: a named polygon with an explicit priority. */
+const HARNESS_BOUNDARY_FEATURE = {
+  type: 'Feature',
+  id: 'vic-lga-1',
+  properties: {
+    name: 'Greater Shepparton City',
+    status: 'Local government area',
+    detail: 'LGA 328',
+    priority: 640,
+  },
+  geometry: {
+    type: 'Polygon',
+    coordinates: [[
+      [-97.70, 30.20],
+      [-97.69, 30.20],
+      [-97.69, 30.21],
+      [-97.70, 30.20],
+    ]],
+  },
+};
+
+async function createBoundaryHarness(options = {}) {
+  return createRealLocalLayerHarness({
+    layerId: 'local-vicmap-lga',
+    outlineOnly: true,
+    feature: HARNESS_BOUNDARY_FEATURE,
+    ...options,
+  });
+}
+
+/** The one entity the boundary harness loads. */
+function boundaryEntity(env) {
+  const entities = env.dataSources[0].entities.values;
+  assert.equal(entities.length, 1, 'harness loads exactly one boundary polygon');
+  return entities[0];
+}
+
+test('a boundary draws a ground-clamped outline instead of a stem and point', async () => {
+  const env = await createBoundaryHarness();
+  try {
+    const entity = boundaryEntity(env);
+    const now = Cesium.JulianDate.now();
+
+    assert.ok(entity.polyline, 'the outer ring is stroked as its own polyline');
+    assert.equal(
+      entity.polyline.clampToGround.getValue(now),
+      true,
+      'a clamped polygon renders no outline of its own, so the stroke must clamp itself',
+    );
+    assert.equal(entity.point, undefined, 'boundaries carry no anchor point');
+
+    const ring = entity.polyline.positions.getValue(now);
+    const hierarchy = entity.polygon.hierarchy.getValue(now);
+    assert.equal(
+      ring.length,
+      hierarchy.positions.length,
+      'the stroke traces the polygon outer ring, not a two-point stem',
+    );
+    assert.ok(ring.length > 2, 'a ring, not a segment');
+
+    env.layer.destroy(env.viewer);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('a camera move never overwrites a boundary outline with a stem', async () => {
+  const env = await createBoundaryHarness();
+  try {
+    const entity = boundaryEntity(env);
+    const before = entity.polyline.positions.getValue(Cesium.JulianDate.now()).length;
+
+    // moveEnd marks stem geometry dirty; the next preRender walk is where the
+    // stem updater would run. A boundary's `polyline` IS its border, so a walk
+    // that treated it as a stem would collapse the ring to two points and the
+    // border would vanish on the user's first camera move.
+    env.moveEnd.raise();
+    env.preRender.raise();
+
+    const after = entity.polyline.positions.getValue(Cesium.JulianDate.now()).length;
+    assert.equal(after, before, 'the outline ring survives a camera move');
+    assert.ok(after > 2, 'and is still a ring');
+
+    env.layer.destroy(env.viewer);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('boundaries never enter the ground-sampling path', async () => {
+  // Cesium clamps a boundary's fill and outline to the terrain itself, so
+  // there is nothing to lift and nothing a height sample could change. A
+  // sampleable scene must therefore still spend zero samples on them —
+  // otherwise every boundary costs a distance check per record per walk, and
+  // arms retry frames on a parked camera, forever.
+  const env = await createBoundaryHarness({
+    sampleHeightSupported: true,
+    sampleHeight: () => 412,
+  });
+  try {
+    env.moveEnd.raise();
+    env.preRender.raise();
+    env.preRender.raise();
+
+    assert.equal(env.sampleCalls.count, 0, 'no height samples are spent on boundaries');
+
+    env.layer.destroy(env.viewer);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('an exporter-supplied priority wins over the property heuristic', async () => {
+  // Every part of a multipart region carries identical properties, so the
+  // heuristic would score a council's mainland body and its sand islands the
+  // same. The exporter ranks parts by area share; this is the wire that
+  // carries that ranking through to the label arbiter.
+  const env = await createBoundaryHarness();
+  try {
+    env.preRender.raise();
+
+    const published = env.hostCalls.filter((call) => call[0] === 'entries').at(-1);
+    assert.ok(published, 'the boundary publishes a label entry');
+    const [entry] = published[2];
+    assert.equal(entry.priority, 640, 'the entry carries the exporter score verbatim');
+    assert.equal(entry.title, 'Greater Shepparton City');
+    assert.deepEqual(entry.details, ['Local government area', 'LGA 328']);
+
+    env.layer.destroy(env.viewer);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('an enclave inside a boundary is stroked as well', async () => {
+  // Alpine Shire wraps two alpine resorts; the FRV districts have four
+  // enclaves with no tessellating neighbour at all. Stroking outer rings only
+  // would leave a hole in the border exactly where an operator is looking.
+  const env = await createBoundaryHarness({
+    feature: {
+      ...HARNESS_BOUNDARY_FEATURE,
+      geometry: {
+        type: 'Polygon',
+        coordinates: [
+          [[-97.70, 30.20], [-97.60, 30.20], [-97.60, 30.30], [-97.70, 30.30], [-97.70, 30.20]],
+          [[-97.68, 30.22], [-97.66, 30.22], [-97.66, 30.24], [-97.68, 30.24], [-97.68, 30.22]],
+        ],
+      },
+    },
+  });
+  try {
+    const entities = env.dataSources[0].entities.values;
+    assert.equal(entities.length, 2, 'the enclave ring gets a stroke entity of its own');
+
+    const [region, enclave] = entities;
+    assert.equal(region.__localLayerId, 'local-vicmap-lga');
+    assert.equal(
+      enclave.__localLayerId,
+      undefined,
+      'the enclave stroke is untagged, so clicking it selects nothing rather than an unregistered context',
+    );
+    assert.equal(enclave.polygon, undefined, 'it is a line, not a second region');
+    assert.equal(
+      enclave.polyline.clampToGround.getValue(Cesium.JulianDate.now()),
+      true,
+    );
+    assert.equal(env.layer.getStats().count, 1, 'stats still count boundaries, not strokes');
+
+    env.layer.destroy(env.viewer);
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('hole collection walks nested hierarchies and skips degenerate rings', () => {
+  const ring = (n) => Array.from({ length: n }, () => new Cesium.Cartesian3(0, 0, 0));
+  const hierarchy = {
+    positions: ring(5),
+    holes: [
+      { positions: ring(4), holes: [{ positions: ring(6), holes: [] }] },
+      { positions: ring(2), holes: [] }, // a segment cannot enclose anything
+    ],
+  };
+
+  const rings = collectHoleRings(hierarchy);
+  assert.deepEqual(rings.map((r) => r.length), [4, 6], 'nested island included, segment dropped');
+  assert.deepEqual(collectHoleRings({ positions: ring(5) }), [], 'a hierarchy with no holes');
+});
+
+test('boundary card copy reuses the Passive Monitor status/detail contract', () => {
+  assert.deepEqual(localInfrastructureOverlayCopy({
+    name: 'CFA District 2',
+    status: 'CFA district',
+    detail: '',
+  }, 'local-vicmap-cfa-district'), {
+    title: 'CFA District 2',
+    details: ['CFA district'],
+  });
+
+  // `status` echoing the title is dropped rather than printed twice — the
+  // FRV response area is the real case, where the unit IS its own name.
+  assert.deepEqual(localInfrastructureOverlayCopy({
+    name: 'FRV Response Area',
+    status: 'FRV Response Area',
+    detail: '',
+  }, 'local-vicmap-frv-response'), {
+    title: 'FRV Response Area',
+    details: [],
+  });
 });
 
 // ─── Bundled-dataset failure surfacing (roadmap L7) ───────────

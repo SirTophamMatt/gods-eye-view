@@ -65,6 +65,7 @@ Static datasets shipped in the repo for an out-of-the-box experience. **None are
 | **TeleGeography Submarine Cable Map** (712 cables + 1,917 landing points) | `telegeography_submarine_cables/` | **CC BY-NC-SA 3.0** | ❌ **NonCommercial — remove for commercial use** | "© TeleGeography — submarinecablemap.com" |
 | **Natural Earth physical regions** (1,046 land + 292 marine named polygons) | `natural_earth/` | **Public domain** | ✅ (no restrictions) | "Made with Natural Earth" (courtesy credit — not legally required) |
 | **DataSF Analysis Neighborhoods** (41 SF neighborhood polygons) | `neighborhoods/` | **PDDL 1.0** (public domain) | ✅ (no restrictions) | "City & County of San Francisco — DataSF" (courtesy — not legally required) |
+| **Vicmap Admin boundaries** (7 layers, 221 polygon parts: LGA, CFA district, CFA total fire ban district, DELWP region, EMV region, FRV district, FRV response area) | `vicmap-admin/` | **CC BY 4.0** | ✅ (attribution required) | "Vicmap Admin © State of Victoria (DEECA)" |
 
 ### ⚠️ TeleGeography is bundled but NonCommercial
 
@@ -130,6 +131,35 @@ is legally required; we note the source here and in the folder's `SOURCE.md`, wh
 the retrieval date (2026-07-30), exact download URL, license evidence, and the
 deterministic transform (`scripts/build-sf-neighborhoods.mjs`: `nhood` → `name`, ~2 m
 Douglas-Peucker simplification, 6-decimal rounding).
+
+### Vicmap Admin boundaries (`vicmap-admin/`)
+
+`vicmap-admin/*.geojsonl` bundles seven administrative-boundary layers from **Vicmap Admin**
+([data.vic.gov.au dataset](https://discover.data.vic.gov.au/dataset/vicmap-admin-rest-api)),
+the State of Victoria's authoritative boundary product, published as a public ArcGIS
+FeatureServer at
+`https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Admin/FeatureServer`.
+They are the reference geometry the Passive Monitor hazard layers are implicitly issued
+against — a total fire ban is declared for a TFB district, a brigade responds inside a CFA
+district, a council runs the recovery in its LGA.
+
+The dataset is licensed **CC BY 4.0**, so attribution is a **condition of use**, not a
+courtesy: the credit is registered in `DATA_CREDITS` (`src/data/dataCredits.js`) as a
+static, always-on entry.
+
+Snapshots, not live. Boundaries are reference data that changes on the order of once a year
+(council amalgamation, ward redistribution), so a runtime dependency on a state ArcGIS
+instance on every page load buys nothing. Regenerate and commit with:
+
+```bash
+node scripts/export-vicmap-admin.mjs
+```
+
+That script records the full transform in its header: server-side generalisation at
+`maxAllowableOffset` 0.001° (~110 m), 5-decimal coordinate rounding, multipart splitting
+with per-part area-share label priority, and the mapping from raw Vicmap attributes onto
+the same `{name, status, detail}` property contract the Passive Monitor exporter emits.
+Retrieved 2026-09-03; upstream refreshes weekly.
 
 ---
 

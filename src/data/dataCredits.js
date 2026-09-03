@@ -169,6 +169,18 @@ export const DATA_CREDITS = [
       'part of NASA’s Earth Observing System Data and Information System (EOSDIS)',
   },
   {
+    // CC BY 4.0 is an attribution licence, so this credit is a condition of
+    // use, not a courtesy — unlike the public-domain Natural Earth outlines
+    // further down. Static and always-on: the snapshots ship with the build,
+    // so there is no "activates" moment to hang a dynamic credit on.
+    key: 'vicmap-admin',
+    html:
+      'Victorian administrative boundaries (LGA, CFA, FRV, DELWP, EMV): ' +
+      '<a href="https://discover.data.vic.gov.au/dataset/vicmap-admin-rest-api" target="_blank" rel="noopener">Vicmap Admin</a> ' +
+      '© State of Victoria (Department of Energy, Environment and Climate Action) ' +
+      '(CC BY 4.0)',
+  },
+  {
     key: 'telegeography',
     html:
       'Submarine cables: © TeleGeography — ' +

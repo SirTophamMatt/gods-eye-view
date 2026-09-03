@@ -306,6 +306,17 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
   // that guard. Leave 'z' unassigned.
   Object.freeze({ id: 'local-pm-warn-watch', token: 'h', disposition: 'enabled-only' }),
   Object.freeze({ id: 'local-pm-weather-warning', token: '1', disposition: 'enabled-only' }),
+  // Vicmap Admin boundaries. Seven digits, leaving '0' free — the token
+  // grammar is [a-z0-9] and the alphabet was already spent, so this is the
+  // last spare slot before the grammar itself has to widen. Like every token
+  // above, these are permanent: changing one silently breaks share links.
+  Object.freeze({ id: 'local-vicmap-cfa-district', token: '3', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-cfa-tfb', token: '4', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-delwp-region', token: '5', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-emv-region', token: '6', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-frv-district', token: '7', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-frv-response', token: '8', disposition: 'enabled-only' }),
+  Object.freeze({ id: 'local-vicmap-lga', token: '9', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military', token: 'm', disposition: 'enabled+mirrored-options', optionOwner: 'flights' }),
   Object.freeze({ id: 'military-awareness', token: 'g', disposition: 'enabled-only' }),
   Object.freeze({ id: 'military-installations', token: 'i', disposition: 'enabled-only' }),

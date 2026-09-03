@@ -33,6 +33,17 @@ import pmFloodUrl from './local_data/passive-monitor/pm-flood.geojsonl?url';
 import pmStormUrl from './local_data/passive-monitor/pm-storm.geojsonl?url';
 import pmPowerUrl from './local_data/passive-monitor/pm-power.geojsonl?url';
 
+// Vicmap Admin boundaries — the reference geometry the Passive Monitor layers
+// above are implicitly issued against. Snapshots only, produced by
+// scripts/export-vicmap-admin.mjs; see that script for why these are not live.
+import vicLgaUrl from './local_data/vicmap-admin/vicmap-lga.geojsonl?url';
+import vicCfaDistrictUrl from './local_data/vicmap-admin/vicmap-cfa-district.geojsonl?url';
+import vicCfaTfbUrl from './local_data/vicmap-admin/vicmap-cfa-tfb.geojsonl?url';
+import vicDelwpRegionUrl from './local_data/vicmap-admin/vicmap-delwp-region.geojsonl?url';
+import vicEmvRegionUrl from './local_data/vicmap-admin/vicmap-emv-region.geojsonl?url';
+import vicFrvDistrictUrl from './local_data/vicmap-admin/vicmap-frv-district.geojsonl?url';
+import vicFrvResponseUrl from './local_data/vicmap-admin/vicmap-frv-response.geojsonl?url';
+
 /**
  * Registry of local GeoJSON datasets.
  * These are lazily loaded natively into Cesium when enabled.
@@ -274,6 +285,107 @@ const passiveMonitorPower = createLocalGeoJsonLayer({
   labelGridPx: 140,
 });
 
+/**
+ * Vicmap Admin boundary layers.
+ *
+ * These answer a different question from every layer above them. A hazard
+ * layer says what is happening; a boundary layer says whose problem it is —
+ * which brigade district a fire sits in, which council will run the recovery,
+ * which region a total fire ban actually covers. On their own they are
+ * furniture; under the Passive Monitor layers they are the frame that makes
+ * the hazards legible.
+ *
+ * They are the only `outlineOnly` layers in the registry, and the palette
+ * follows from that: every hazard layer above owns a SATURATED hue, so the
+ * boundaries take desaturated ones and group by agency (the two FRV layers
+ * share a teal family, the two CFA layers a warm-earth one). A boundary can
+ * then never be mistaken for a warning at a glance, which matters most in
+ * exactly the situation these are drawn for.
+ *
+ * Labels are capped low and gridded wide. There are only ~140 polygons across
+ * all seven, but they are all in one state, so at a Victoria-wide camera every
+ * label competes with every other one — and with whatever hazard cards are
+ * already on screen.
+ */
+const VICMAP_SOURCE = 'Vicmap Admin';
+const VICMAP_BOUNDARY_DEFAULTS = Object.freeze({
+  outlineOnly: true,
+  source: VICMAP_SOURCE,
+  labels: true,
+  labelMax: 60,
+  labelGridPx: 190,
+});
+
+const vicmapLga = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-lga',
+  url: vicLgaUrl,
+  name: 'VIC Local Government Areas',
+  color: '#9fb3c8', // Neutral steel — the civil base layer under everything
+  icon: '▢',
+  // 79 councils plus alpine resorts and unincorporated islands, so this is the
+  // densest of the seven and the one most likely to be on with hazards.
+  labelMax: 80,
+});
+
+const vicmapCfaDistrict = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-cfa-district',
+  url: vicCfaDistrictUrl,
+  name: 'VIC CFA Districts',
+  color: '#c98a7d', // CFA red, desaturated well clear of the warning ladder
+  icon: '◫',
+});
+
+const vicmapCfaTfb = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-cfa-tfb',
+  url: vicCfaTfbUrl,
+  name: 'VIC Total Fire Ban Districts',
+  color: '#d9a05b', // Warm earth, same family as the CFA districts above
+  icon: '◪',
+});
+
+const vicmapDelwpRegion = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-delwp-region',
+  url: vicDelwpRegionUrl,
+  name: 'VIC DELWP Regions',
+  color: '#7fb069', // Land-management green
+  icon: '⬡',
+});
+
+const vicmapEmvRegion = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-emv-region',
+  url: vicEmvRegionUrl,
+  name: 'VIC Emergency Management Regions',
+  color: '#a89ae0', // Coordination violet
+  icon: '⬢',
+});
+
+const vicmapFrvDistrict = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-frv-district',
+  url: vicFrvDistrictUrl,
+  name: 'VIC FRV Districts',
+  color: '#6fb3ad', // FRV teal
+  icon: '◧',
+});
+
+const vicmapFrvResponse = createLocalGeoJsonLayer({
+  ...VICMAP_BOUNDARY_DEFAULTS,
+  id: 'local-vicmap-frv-response',
+  url: vicFrvResponseUrl,
+  name: 'VIC FRV Response Area',
+  color: '#4a8f96', // Deeper FRV teal — same agency, one rung down
+  icon: '◨',
+  // One dissolved region in 22 parts, every part sharing a name. The line is
+  // the product here, not the label, so the cap only needs to cover the few
+  // parts big enough to read.
+  labelMax: 12,
+});
+
 export default [
   datacenters,
   dams,
@@ -291,4 +403,13 @@ export default [
   passiveMonitorStorm,
   passiveMonitorPower,
   passiveMonitorRoads,
+  // Boundaries last: they are the frame the hazards above are read against,
+  // and this order is what the layer tray shows.
+  vicmapLga,
+  vicmapCfaDistrict,
+  vicmapCfaTfb,
+  vicmapDelwpRegion,
+  vicmapEmvRegion,
+  vicmapFrvDistrict,
+  vicmapFrvResponse,
 ];

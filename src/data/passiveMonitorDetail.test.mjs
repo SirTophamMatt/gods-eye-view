@@ -29,9 +29,18 @@ function fakePanel() {
 const ORIGIN = { latitude: -37.53881, longitude: 143.82491 };
 
 const STATIONS = [
-  { name: 'Wendouree Fire Station', latitude: -37.5401, longitude: 143.8302, distanceKm: 0.52 },
-  { name: 'Ballarat City Fire Station', latitude: -37.5622, longitude: 143.8503, distanceKm: 3.4 },
-  { name: 'Sebastopol Fire Station', latitude: -37.5892, longitude: 143.8412, distanceKm: 5.8 },
+  {
+    name: 'Wendouree Fire Station', latitude: -37.5401, longitude: 143.8302,
+    distanceKm: 0.52, roadDistanceM: 900, code1S: 95, agency: 'cfa',
+  },
+  {
+    name: 'Ballarat City Fire Station', latitude: -37.5622, longitude: 143.8503,
+    distanceKm: 3.4, roadDistanceM: 4400, code1S: 260, agency: 'frv',
+  },
+  {
+    name: 'Sebastopol Fire Station', latitude: -37.5892, longitude: 143.8412,
+    distanceKm: 5.8, roadDistanceM: 7100, code1S: 400, agency: 'cfa',
+  },
 ];
 
 test.afterEach(() => _setBrigadeDepsForTest());
@@ -75,12 +84,20 @@ test('the action lists the stations and draws one line to each', async () => {
   for (const station of STATIONS) {
     assert.ok(panel.out.innerHTML.includes(station.name), `${station.name} is listed`);
   }
-  assert.ok(panel.out.innerHTML.includes('0.5 km'), 'close range keeps its decimal');
+  assert.ok(panel.out.innerHTML.includes('2 min'), 'the Code 1 time is the headline figure');
+  assert.ok(panel.out.innerHTML.includes('0.9 km by road'), 'the road distance sits under it');
+  assert.ok(panel.out.innerHTML.includes('FRV (career)'), 'career stations are marked');
+  assert.ok(panel.out.innerHTML.includes('CFA (likely volunteer)'), 'and volunteer ones');
   assert.ok(panel.out.innerHTML.includes('Nearest 3 stations'));
   assert.match(
     panel.out.innerHTML,
-    /Straight-line distance\. Not a dispatch/,
-    'the answer never pretends to be a turnout',
+    /Code 1 drive time only — excludes turnout/,
+    'the number never pretends to be a response time',
+  );
+  assert.match(
+    panel.out.innerHTML,
+    /Nearest is not dispatched/,
+    'nor a dispatch',
   );
 
   assert.equal(drawn.length, 1, 'one batched annotate call');
@@ -96,9 +113,23 @@ test('the action lists the stations and draws one line to each', async () => {
       latitude: STATIONS[i].latitude,
       longitude: STATIONS[i].longitude,
     });
-    // Name ONLY: the engine appends the routed distance and drive time, so a
-    // straight-line figure here would print two numbers for one trip.
-    assert.equal(specs[i].label, STATIONS[i].name);
+    // The caller composes the whole label and suppresses the engine's own
+    // metrics: its suffix is the ORDINARY car-profile time, and two travel
+    // times on one line is worse than either alone.
+    assert.equal(specs[i].metrics, false);
+    assert.ok(specs[i].label.startsWith(STATIONS[i].name));
+    assert.match(specs[i].label, /Code 1/, 'the model is named, never left as a bare time');
+  }
+
+  // A bare "2 min" beside a fire reads as a response time to anyone who does
+  // not know how it was computed.
+  assert.equal(specs[0].label, 'Wendouree Fire Station · 2 min Code 1 · CFA');
+  assert.equal(specs[1].label, 'Ballarat City Fire Station · 4 min Code 1 · FRV');
+
+  // The engine clamps a label at 80 characters and truncates mid-word, so a
+  // line that overruns loses its agency code rather than wrapping.
+  for (const spec of specs) {
+    assert.ok(spec.label.length <= 80, `${spec.label.length} chars: ${spec.label}`);
   }
 
   assert.equal(panel.button.disabled, false, 'the control is released');

@@ -73,7 +73,20 @@ test('parseStations reads JSON Lines, a FeatureCollection, and survives a bad ro
     type: 'FeatureCollection',
     features: [JSON.parse(line('A', 143.8, -37.5))],
   });
-  assert.deepEqual(parseStations(collection), [{ name: 'A', latitude: -37.5, longitude: 143.8 }]);
+  assert.deepEqual(
+    parseStations(collection),
+    [{ name: 'A', latitude: -37.5, longitude: 143.8, state: null }],
+    'a record with no state reads as null, not as absent',
+  );
+
+  // `state` is carried through: a quarter of the gazetteer is interstate and
+  // the agency classifier reads this field rather than the geometry.
+  const nsw = JSON.stringify({
+    type: 'Feature',
+    geometry: { type: 'Point', coordinates: [149.9, -37.06] },
+    properties: { name: 'Eden Fire Station', state: 'NSW' },
+  });
+  assert.equal(parseStations(nsw)[0].state, 'NSW');
 
   // One malformed row costs that row, not the whole action.
   const withJunk = `${line('A', 143.8, -37.5)}\n{ not json\n${line('B', 144.0, -37.6)}`;

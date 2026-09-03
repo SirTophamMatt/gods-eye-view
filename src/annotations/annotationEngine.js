@@ -706,7 +706,14 @@ export function createAnnotationEngine({
       const path = resolved.path.map((p) => ({ lon: p.lon, lat: p.lat, height: p.height }));
       return {
         ...base,
-        label: composeRouteLabel(base.label, resolved.distanceM, resolved.durationS, resolved.mode, resolved.fallback),
+        // `metrics: false` means the CALLER already composed the numbers it
+        // wants on this label and the engine must not append its own. Added
+        // for the nearest-brigades action, which models an emergency-response
+        // speed the generic car profile cannot: two travel times on one line
+        // is worse than either alone.
+        label: spec?.metrics === false
+          ? base.label
+          : composeRouteLabel(base.label, resolved.distanceM, resolved.durationS, resolved.mode, resolved.fallback),
         anchor: path[0],
         to: null,
         path,

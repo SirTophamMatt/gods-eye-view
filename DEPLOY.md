@@ -300,6 +300,14 @@ referrer-restricted to a domain that is not this one.
 absent or rate-limited. Check `docker compose logs app` for the proxy's
 sanitized error; a missing key never takes the rest of the app down.
 
+**Nearest brigades lists stations but shows distances instead of times** — the
+Code 1 estimate is computed from a real road route, so it needs `/api/route`
+(OSRM via `routing.openstreetmap.de`) to be reachable from the container. The
+station list, the straight-line distances and the FRV/CFA badges are all
+computed from bundled files and keep working without it; only the travel times
+drop out, and the lines fall back to a direct segment labelled "direct line (no
+route)" rather than passing a straight line off as a road route.
+
 **A `PM …` warning layer is empty** — this is usually correct, not a fault.
 `PM Emergency Warnings` and `PM Watch & Act` are empty whenever nothing is
 current at that level, which is most of the time. The layer still registers and

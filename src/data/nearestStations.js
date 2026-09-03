@@ -57,7 +57,7 @@ export function haversineKm(aLat, aLon, bLat, bLon) {
  * should cost that row, not the whole action.
  *
  * @param {string} text Raw snapshot body.
- * @returns {{name: string, latitude: number, longitude: number}[]} Stations.
+ * @returns {{name: string, latitude: number, longitude: number, state: string|null}[]} Stations.
  */
 export function parseStations(text) {
   const trimmed = String(text || '').trim();
@@ -92,7 +92,12 @@ export function parseStations(text) {
     if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
     const name = String(feature?.properties?.name || '').trim();
     if (!name) continue;
-    stations.push({ name, latitude, longitude });
+    // `state` rides along because a quarter of the gazetteer is NOT Victorian
+    // — Vicmap covers the border overlap — and the agency classifier needs it.
+    // Geometry alone would test a NSW brigade against a Victorian response
+    // boundary, find it outside, and confidently label it CFA.
+    const state = String(feature?.properties?.state || '').trim() || null;
+    stations.push({ name, latitude, longitude, state });
   }
   return stations;
 }

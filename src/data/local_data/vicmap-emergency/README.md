@@ -1,7 +1,14 @@
 # Vicmap fire stations
 
-`vicmap-fire-station.geojsonl` — 1,726 CFA and FRV fire stations in Victoria, essentially
-the whole public station network.
+`vicmap-fire-station.geojsonl` — 1,726 fire stations.
+
+**A quarter of them are not Victorian.** Vicmap's gazetteer covers the border overlap, so
+the file holds 1,288 VIC, 334 NSW and 102 SA stations (plus 2 with no state recorded).
+They are kept rather than filtered: cross-border response is real, and for a fire at
+Nelson or Mallacoota the nearest brigade genuinely is over the line. Each feature carries
+a `state` property so consumers can tell them apart — the FRV/CFA classifier reads it
+rather than the geometry, because testing a NSW brigade against a Victorian response-area
+boundary puts it outside and would label it CFA.
 
 Two consumers, one file:
 

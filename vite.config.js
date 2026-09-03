@@ -2757,7 +2757,13 @@ function overpassProxy() {
             res.end(JSON.stringify(cached.payload));
             return;
           }
-          const upstream = `https://routing.openstreetmap.de/routed-${profile}/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false`;
+          // `annotations` returns PER-SEGMENT speed/distance/duration arrays.
+          // Route totals alone cannot carry a speed model: applying an uplift
+          // to a whole-route average systematically underestimates a mixed
+          // route, because the cap that should bite only on the highway
+          // stretch gets applied to the suburban average instead. Cheaper than
+          // `steps=true`, which would return turn-by-turn prose we never read.
+          const upstream = `https://routing.openstreetmap.de/routed-${profile}/route/v1/${osrmProfile}/${coords}?overview=full&geometries=geojson&alternatives=false&steps=false&annotations=speed,duration,distance`;
           const controller = new AbortController();
           const timer = setTimeout(() => controller.abort(), 12000);
           let osrm;
@@ -2783,6 +2789,20 @@ function overpassProxy() {
             durationS: Math.round(route.duration),
             geometry: route.geometry.coordinates,
           };
+          // Per-segment arrays, rounded to one decimal — the model reads them
+          // as m and m/s, where a tenth is already below the precision OSRM's
+          // own profile has. Omitted entirely when upstream did not supply
+          // them, so a consumer can tell "no annotation" from "zero speed".
+          const ann = route.legs?.[0]?.annotation;
+          if (Array.isArray(ann?.speed) && Array.isArray(ann?.distance)
+            && Array.isArray(ann?.duration)) {
+            const round1 = (n) => Math.round(Number(n) * 10) / 10;
+            payload.annotation = {
+              speed: ann.speed.map(round1),
+              distance: ann.distance.map(round1),
+              duration: ann.duration.map(round1),
+            };
+          }
           _routeCache.set(cacheKey, { payload, cachedAt: now });
           if (_routeCache.size > 200) _routeCache.delete(_routeCache.keys().next().value);
           res.writeHead(200, { 'Content-Type': 'application/json' });

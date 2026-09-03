@@ -388,8 +388,11 @@ const vicmapFrvResponse = createLocalGeoJsonLayer({
 });
 
 /**
- * Victorian fire stations — 1,726 CFA and FRV stations from the Vicmap
- * gazetteer.
+ * Fire stations from the Vicmap gazetteer — 1,726 of them, and a quarter are
+ * NOT Victorian: Vicmap covers the border overlap, so 334 NSW and 102 SA
+ * brigades sit alongside the 1,288 VIC ones. Kept rather than filtered,
+ * because near Nelson or Mallacoota the nearest brigade really is over the
+ * line, and the layer name says so rather than overclaiming.
  *
  * A point layer, so it needs none of the boundary machinery above: the
  * stem-and-point presentation the datacenters layer has always used is exactly
@@ -407,7 +410,7 @@ const vicmapFrvResponse = createLocalGeoJsonLayer({
 const vicmapFireStation = createLocalGeoJsonLayer({
   id: 'local-vicmap-fire-station',
   url: vicFireStationUrl,
-  name: 'VIC Fire Stations',
+  name: 'Fire Stations (VIC + border)',
   color: '#2ecc71',
   icon: '⌂',
   source: 'Vicmap FOI',

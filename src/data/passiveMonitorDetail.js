@@ -23,6 +23,8 @@
  */
 
 import { formatDistanceKm } from './nearestStations.js';
+import { formatMinutes } from './code1Response.js';
+import { agencyLabel, agencyShort } from './stationAgency.js';
 
 const PANEL_ID = 'pm-detail-panel';
 const LAYER_PREFIX = 'local-pm-';
@@ -84,8 +86,8 @@ let _annotations = () => window.__gevAnnotations || null;
  */
 async function findNearest(origin, count) {
   if (_findNearest) return _findNearest(origin, count);
-  const { findNearestFireStations } = await import('./fireStationLookup.js');
-  return findNearestFireStations(origin, count);
+  const { nearestBrigades } = await import('./brigadeResponse.js');
+  return nearestBrigades(origin, count);
 }
 
 /** Swap the brigade-action collaborators. Tests only. */
@@ -269,6 +271,83 @@ export function renderPassiveMonitorDetail(record) {
 }
 
 /**
+ * The one sentence under every result.
+ *
+ * It has to carry the two things that make the numbers above it smaller than
+ * they look — this is a drive, not a response, and nearest is not who is
+ * dispatched — in a line short enough that people actually read it.
+ */
+const BRIGADE_DISCLAIMER = 'Code 1 drive time only — excludes turnout, which is '
+  + 'usually the larger half for a volunteer brigade. Nearest is not dispatched: '
+  + 'Victoria turns out by response area, not proximity.';
+
+/**
+ * Headline figure for one station: Code 1 travel time where routing resolved,
+ * straight-line distance where it did not.
+ *
+ * Never both. They are different quantities measured along different paths,
+ * and a row reading "3 min · 4.9 km" invites the reader to divide one by the
+ * other and get a speed that was never driven.
+ *
+ * @param {object} station Station with `distanceKm` and optional `code1S`.
+ * @returns {string} Display figure.
+ */
+export function brigadeTime(station) {
+  if (Number.isFinite(station?.code1S)) return formatMinutes(station.code1S);
+  return formatDistanceKm(station?.distanceKm);
+}
+
+/**
+ * Context line: how far by road, and whose station it is.
+ *
+ * The road distance is worth printing beside a time even though the time is
+ * derived from it — it is what tells a reader the ordering they are looking at
+ * (which is straight-line) is not the ordering the roads produce.
+ *
+ * @param {object} station Station record.
+ * @returns {string} Sub-line, possibly empty.
+ */
+export function brigadeSubline(station) {
+  const parts = [];
+  if (Number.isFinite(station?.roadDistanceM)) {
+    parts.push(`${formatDistanceKm(station.roadDistanceM / 1000)} by road`);
+  } else if (Number.isFinite(station?.code1S)) {
+    // A time with no road distance means the model ran on the route average.
+    parts.push(`${formatDistanceKm(station?.distanceKm)} direct`);
+  }
+  const agency = agencyLabel(station?.agency);
+  if (agency) parts.push(agency);
+  return parts.join(' · ');
+}
+
+/**
+ * Label for one brigade line on the globe.
+ *
+ * Says "Code 1" explicitly rather than "drive". The engine's own suffix, which
+ * this replaces, said "4 min drive" — and an unqualified travel time beside a
+ * fire will be read as a response time by anyone who does not know how it was
+ * computed. Naming the model is what stops that.
+ *
+ * @param {object} station Station record.
+ * @returns {string} Line label.
+ */
+export function brigadeLineLabel(station) {
+  const parts = [station?.name || 'Fire station'];
+  if (Number.isFinite(station?.code1S)) {
+    parts.push(`${formatMinutes(station.code1S)} Code 1`);
+  } else if (Number.isFinite(station?.distanceKm)) {
+    parts.push(formatDistanceKm(station.distanceKm));
+  }
+  // Short code, and no road distance: the engine clamps a label at 80
+  // characters, and "Hampton Park Satellite Fire Station (Lynbrook)" spends 45
+  // of them before any metrics — the full form truncated mid-word to
+  // "CFA (li". The panel has room for both and keeps them.
+  const agency = agencyShort(station?.agency);
+  if (agency) parts.push(agency);
+  return parts.join(' · ');
+}
+
+/**
  * Resolve, list, and draw the nearest brigades for one incident.
  *
  * Exported for the tests, which drive it against a stub rather than the real
@@ -304,11 +383,14 @@ export async function showNearestBrigades(panel, origin, button) {
     out.innerHTML = `
       <div class="pm-detail-brigade-head">Nearest ${stations.length === 1 ? 'station' : `${stations.length} stations`}</div>
       ${stations.map((station) => `
-        <div class="pm-detail-row">
-          <span class="pm-detail-value">${escapeHtml(station.name)}</span>
-          <span class="pm-detail-label">${escapeHtml(formatDistanceKm(station.distanceKm))}</span>
+        <div class="pm-detail-brigade">
+          <div class="pm-detail-row">
+            <span class="pm-detail-value">${escapeHtml(station.name)}</span>
+            <span class="pm-detail-label">${escapeHtml(brigadeTime(station))}</span>
+          </div>
+          <div class="pm-detail-brigade-sub">${escapeHtml(brigadeSubline(station))}</div>
         </div>`).join('')}
-      <p class="pm-detail-note">Straight-line distance. Not a dispatch — Victoria turns out brigades by response area, not proximity.</p>`;
+      <p class="pm-detail-note">${escapeHtml(BRIGADE_DISCLAIMER)}</p>`;
 
     drawBrigadeLines(origin, stations);
   } catch (error) {
@@ -365,13 +447,13 @@ function drawBrigadeLines(origin, stations) {
       type: 'route',
       color: 'green',
       mode: 'car',
-      // Name only. A `route` is street-following, and the engine appends its
-      // own "— 4.2 km · 8 min drive" from the ROUTED geometry — so adding the
-      // straight-line distance here would print two different numbers for the
-      // same trip in one label. The panel keeps the straight-line figures
-      // because they are what the ranking is based on and they are always
-      // available; the line carries the road answer when routing resolves.
-      label: station.name,
+      // `metrics: false` suppresses the engine's own "— 4.2 km · 4 min drive".
+      // That figure is the ordinary car profile; ours is the Code 1 model over
+      // the same route, and two travel times on one line is worse than either
+      // alone. The engine still ROUTES — it needs the road geometry to draw —
+      // and hits the proxy's 10-minute cache, so this costs no extra request.
+      metrics: false,
+      label: brigadeLineLabel(station),
       points: [
         { latitude: origin.latitude, longitude: origin.longitude },
         { latitude: station.latitude, longitude: station.longitude },

@@ -9416,6 +9416,24 @@ body.scene-playback-mode #first-run-launcher {
   text-align: right;
 }
 
+/* Each brigade is a two-line block: name + headline time, then the road
+   distance and whose station it is. The sub-line is dimmer and indented so
+   the three stations still scan as three rows, not six. */
+.pm-detail-brigade {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pm-detail-brigade-sub {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+}
+
+.pm-detail-brigade-sub:empty { display: none; }
+
 .pm-detail-brigade-head {
   font-family: var(--font-mono);
   font-size: 8px;

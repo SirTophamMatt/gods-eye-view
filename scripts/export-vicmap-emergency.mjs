@@ -113,6 +113,15 @@ function normalizeFeature(feature) {
   if (!Array.isArray(coordinates) || !Number.isFinite(Number(coordinates[0]))
     || !Number.isFinite(Number(coordinates[1]))) return [];
 
+  // Vicmap's gazetteer covers the border overlap, so a quarter of these are
+  // NOT Victorian: 334 NSW and 102 SA against 1,289 VIC on the last run. They
+  // are KEPT, because cross-border response is real — a fire at Nelson or
+  // Mallacoota may genuinely be closest to an SA or NSW brigade, and mutual
+  // aid exists — but the state has to travel with them. Without it the
+  // FRV/CFA classifier, which is a Victorian instrument, would confidently
+  // label a NSW Rural Fire Brigade as CFA.
+  const state = String(attrs.state ?? '').trim().toUpperCase() || null;
+
   return [{
     type: 'Feature',
     geometry: { type: 'Point', coordinates: roundPoint(coordinates) },
@@ -120,6 +129,7 @@ function normalizeFeature(feature) {
       name,
       status: 'Fire station',
       detail: '',
+      state,
       source: `${SOURCE} · Fire Stations`,
     },
   }];
@@ -146,6 +156,16 @@ async function main() {
     + `${dropped ? ` (${dropped} placeholder/geometryless dropped)` : ''}`
     + `  ${(Buffer.byteLength(body, 'utf8') / 1024).toFixed(0)} KB`,
   );
+
+  // Printed every run so the border overlap stays visible. A silent shift in
+  // the VIC:NSW:SA mix means the upstream filter changed under us.
+  const byState = new Map();
+  for (const f of features) {
+    const key = f.properties.state || 'unknown';
+    byState.set(key, (byState.get(key) || 0) + 1);
+  }
+  const mix = [...byState].sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · ');
+  console.log(`  by state       ${mix}`);
 }
 
 main().catch((error) => {

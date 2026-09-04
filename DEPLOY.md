@@ -249,10 +249,19 @@ git commit -m "Refresh Vicmap fire stations"
 git push
 ```
 
-That file has a second consumer besides its layer: the detail panel's **Nearest
-brigades** action reads it directly, so it answers whether or not the layer is
+That file has a second consumer besides its layer: the detail panel's **Response
+timeline** action reads it directly, so it answers whether or not the layer is
 switched on. Deleting the snapshot therefore removes the button's data as well
 as the layer's — both fail visibly rather than silently, but they fail together.
+
+That action reads two of the Vicmap Admin boundaries the same way. The FRV
+response area sets each station's agency badge and decides whether the response
+menu offers GARS alarm levels or Make Tankers; the CFA district partition sets
+each brigade's turnout standard (`src/data/turnoutStandard.js` — FRV 1:30, CFA
+4:00 in Districts 7/8/13/14, 8:00 elsewhere). Both degrade on their own: without
+the FRV file every station loses its badge and the menu falls back to the general
+response, and without the district file the timeline draws travel only. Neither
+failure costs the station list.
 
 ## Streaming live from Passive Monitor
 

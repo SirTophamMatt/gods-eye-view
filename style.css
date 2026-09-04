@@ -9469,6 +9469,130 @@ body.scene-playback-mode #first-run-launcher {
   border-top: 1px solid var(--glass-border);
 }
 
+/* ── Response timeline ────────────────────────────────────────────
+   Two section colours, defined once here and read by the SVG through
+   `var(--rt-*)`. Amber is the SDS block (waiting on a crew), blue is the Code 1
+   drive (moving). They are deliberately unlike the severity accents above: a
+   bar segment is not a warning level, and reusing red/orange here would make a
+   long rural turnout read as an escalation. */
+.pm-detail-brigades {
+  --rt-sds: #e6c700;
+  --rt-travel: #4aa3df;
+}
+
+.pm-detail-plan {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.pm-detail-plan-label {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.3px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+}
+
+.pm-detail-plan-select {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.6px;
+  color: var(--text-primary);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--glass-border);
+  border-radius: 3px;
+  padding: 5px 7px;
+  cursor: pointer;
+}
+
+.pm-detail-plan-select:focus-visible {
+  outline: none;
+  border-color: var(--pm-detail-accent, var(--accent));
+}
+
+.pm-detail-plan-note {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1.5;
+  letter-spacing: 0.4px;
+  color: var(--text-dim);
+  margin-top: 5px;
+}
+
+.rt-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 9px;
+}
+
+.rt-key {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  color: var(--text-dim);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* A swatch rather than coloured text: the labels sit at 8px, where a hue
+   carries far less signal than a solid block does. */
+.rt-key::before {
+  content: '';
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background: currentColor;
+}
+
+.rt-key-sds::before { background: var(--rt-sds); }
+.rt-key-travel::before { background: var(--rt-travel); }
+
+.rt-key-now::before {
+  width: 2px;
+  height: 10px;
+  border-radius: 0;
+  background: var(--pm-detail-accent, var(--text-primary));
+}
+
+/* `overflow: visible` matches .fg-chart: the elapsed marker's label is
+   anchored outside the plot near the edges and would otherwise be clipped. */
+.rt-chart {
+  display: block;
+  width: 100%;
+  height: auto;
+  margin: 10px 0 2px;
+  color: var(--text-primary);
+  overflow: visible;
+}
+
+.rt-chart .rt-name {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 0.3px;
+  fill: var(--text-primary);
+}
+
+.rt-chart .rt-total,
+.rt-chart .rt-tick {
+  font-family: var(--font-mono);
+  font-size: 7.5px;
+  letter-spacing: 0.3px;
+  fill: var(--text-dim);
+}
+
+.rt-chart .rt-now {
+  font-family: var(--font-mono);
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  fill: var(--pm-detail-accent, var(--text-primary));
+}
+
 
 /* ── Pager mode — live brigade pages ──────────────────────────────
    Self-contained chrome, not a layer-tray row or a panel-pin target: pager

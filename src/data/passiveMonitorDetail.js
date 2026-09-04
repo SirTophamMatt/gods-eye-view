@@ -26,6 +26,15 @@ import { formatDistanceKm } from './nearestStations.js';
 import { formatMinutes } from './code1Response.js';
 import { floodGaugeChart } from './floodGauge.js';
 import { agencyLabel, agencyShort } from './stationAgency.js';
+import { formatClock } from './turnoutStandard.js';
+import { DEFAULT_PLAN_ID, plansFor, resolvePlan, stationCount } from './responsePlan.js';
+import {
+  STATUS_LABEL,
+  buildTimeline,
+  parseIncidentTime,
+  responseTimelineChart,
+  rowStatus,
+} from './responseTimeline.js';
 
 const PANEL_ID = 'pm-detail-panel';
 const LAYER_PREFIX = 'local-pm-';
@@ -43,7 +52,18 @@ const LAYER_PREFIX = 'local-pm-';
  * brigades do road rescue, so the nearest stations are relevant there too.
  */
 const BRIGADE_HAZARDS = new Set(['incident', 'burn-area', 'warning']);
-const BRIGADE_COUNT = 3;
+
+/**
+ * How often the elapsed marker is redrawn, ms.
+ *
+ * Ten seconds, not one: the chart's finest tick is 30 seconds wide and the
+ * marker moves about a pixel a second on a typical scale, so a per-second
+ * redraw would burn a timer on sub-pixel motion nobody can see.
+ */
+const TIMELINE_TICK_MS = 10000;
+
+/** How many brigades get pins and routes on the globe, however many are listed. */
+const MAX_DRAWN_BRIGADES = 10;
 
 /**
  * Severity accent, matching Passive Monitor's own warning palette
@@ -74,7 +94,17 @@ let _keyHandler = null;
  * `main.js` never sets these — the defaults below are the real path.
  */
 let _findNearest = null;
+let _inFrvArea = null;
 let _annotations = () => window.__gevAnnotations || null;
+
+/**
+ * The live-marker timer for the open panel.
+ *
+ * Module-scoped rather than per-render because there is only ever one panel:
+ * a second render (a different record, or a re-run at a new response size)
+ * must stop the previous timer or the two fight over the same node.
+ */
+let _timelineTimer = null;
 
 /**
  * Resolve the station lookup, importing it on first use.
@@ -91,9 +121,31 @@ async function findNearest(origin, count) {
   return nearestBrigades(origin, count);
 }
 
+/**
+ * Whether the incident is on FRV ground, for the response-size menu.
+ *
+ * Same dynamic-import reasoning as `findNearest`, and the same degradation:
+ * null means the boundary did not resolve, and the menu falls back to the one
+ * option that needs no agency vocabulary.
+ */
+async function inFrvArea(origin) {
+  if (_inFrvArea) return _inFrvArea(origin);
+  try {
+    const { incidentInFrvArea } = await import('./brigadeResponse.js');
+    return await incidentInFrvArea(origin);
+  } catch {
+    return null;
+  }
+}
+
 /** Swap the brigade-action collaborators. Tests only. */
-export function _setBrigadeDepsForTest({ findNearest: find, annotations } = {}) {
+export function _setBrigadeDepsForTest({
+  findNearest: find,
+  inFrvArea: frv,
+  annotations,
+} = {}) {
   _findNearest = find || null;
+  _inFrvArea = frv || null;
   _annotations = annotations || (() => window.__gevAnnotations || null);
 }
 
@@ -221,6 +273,9 @@ export function renderPassiveMonitorDetail(record) {
     ? `${record.latitude.toFixed(5)}, ${record.longitude.toFixed(5)}`
     : '';
 
+  // A new record replaces the whole panel body, taking the timeline node with
+  // it. Stop the ticker first or it keeps firing against a detached element.
+  stopTimelineTicker();
   panel.style.setProperty('--pm-detail-accent', accent);
   panel.innerHTML = `
     <div class="pm-detail-inner">
@@ -258,7 +313,7 @@ export function renderPassiveMonitorDetail(record) {
 
         ${offersBrigadeAction(props, record) ? `
         <div class="pm-detail-actions">
-          <button type="button" class="pm-detail-action" data-action="brigades">Nearest brigades</button>
+          <button type="button" class="pm-detail-action" data-action="brigades">Response timeline</button>
         </div>
         <div class="pm-detail-brigades" hidden></div>` : ''}
 
@@ -275,7 +330,7 @@ export function renderPassiveMonitorDetail(record) {
     showNearestBrigades(panel, {
       latitude: record.latitude,
       longitude: record.longitude,
-    }, event.currentTarget);
+    }, event.currentTarget, { incidentTime: props.ts });
   });
   return true;
 }
@@ -287,9 +342,11 @@ export function renderPassiveMonitorDetail(record) {
  * they look — this is a drive, not a response, and nearest is not who is
  * dispatched — in a line short enough that people actually read it.
  */
-const BRIGADE_DISCLAIMER = 'Code 1 drive time only — excludes turnout, which is '
-  + 'usually the larger half for a volunteer brigade. Nearest is not dispatched: '
-  + 'Victoria turns out by response area, not proximity.';
+const BRIGADE_DISCLAIMER = 'SDS is the turnout STANDARD (FRV 1:30, CFA 4:00 in '
+  + 'Districts 7/8/13/14, 8:00 elsewhere), not a prediction of what a brigade '
+  + 'achieves. Turnout is a modelled Code 1 drive. The marker is where an '
+  + 'appliance should be if everything ran to standard — not a position report. '
+  + 'Nearest is not dispatched: Victoria turns out by response area, not proximity.';
 
 /**
  * Headline figure for one station: Code 1 travel time where routing resolved,
@@ -327,6 +384,11 @@ export function brigadeSubline(station) {
   }
   const agency = agencyLabel(station?.agency);
   if (agency) parts.push(agency);
+  // The standard names its own basis ("CFA D8 metro standard"), which is what
+  // makes a 4:00 block legible next to an 8:00 one two rows down.
+  if (Number.isFinite(station?.sds?.seconds)) {
+    parts.push(`SDS ${formatClock(station.sds.seconds)}`);
+  }
   return parts.join(' · ');
 }
 
@@ -357,8 +419,98 @@ export function brigadeLineLabel(station) {
   return parts.join(' · ');
 }
 
+/** Stop the live marker. Safe to call when none is running. */
+function stopTimelineTicker() {
+  if (_timelineTimer === null) return;
+  clearInterval(_timelineTimer);
+  _timelineTimer = null;
+}
+
 /**
- * Resolve, list, and draw the nearest brigades for one incident.
+ * Keep the elapsed marker moving while the panel stays open.
+ *
+ * Redraws only the chart's own container, not the whole result block: the
+ * response-size `<select>` lives in the same subtree and replacing it under
+ * the reader would drop an open dropdown and lose keyboard focus.
+ *
+ * The timer self-cancels once the node leaves the document, which covers the
+ * paths that do not run through `hidePassiveMonitorDetail` — a re-render for
+ * a different record, or the panel being torn out from elsewhere.
+ *
+ * @param {HTMLElement} host The `.rt-chart-host` node.
+ * @param {object[]} stations Stations to re-model each tick.
+ * @param {number|null} incidentMs Incident instant, null when unknown.
+ */
+function startTimelineTicker(host, stations, incidentMs) {
+  stopTimelineTicker();
+  if (!Number.isFinite(incidentMs)) return;
+  if (typeof setInterval !== 'function') return;
+
+  _timelineTimer = setInterval(() => {
+    if (!host.isConnected) {
+      stopTimelineTicker();
+      return;
+    }
+    renderTimelineInto(host, stations, incidentMs);
+  }, TIMELINE_TICK_MS);
+}
+
+/**
+ * Draw the chart and its per-station status lines into a host node.
+ *
+ * @param {HTMLElement} host Container.
+ * @param {object[]} stations Stations with `sds` and optional `code1S`.
+ * @param {number|null} incidentMs Incident instant.
+ */
+function renderTimelineInto(host, stations, incidentMs) {
+  const model = buildTimeline(stations, { incidentMs });
+  host.innerHTML = responseTimelineChart(model);
+}
+
+/**
+ * One line naming what the elapsed clock is measured from.
+ *
+ * Always says which timestamp it used and whether a zone was assumed. An
+ * elapsed figure whose origin is unstated is the easiest number on this panel
+ * to misread, and the panel's own house rule is that a time which has been
+ * quietly shifted is worse than one that was never formatted.
+ *
+ * @param {{ms: number, zoned: boolean}|null} incident Parsed incident time.
+ * @returns {string} Caption.
+ */
+export function timelineOriginNote(incident) {
+  if (!incident) {
+    return 'No usable incident timestamp — the timeline shows the plan only, with no elapsed marker.';
+  }
+  return incident.zoned
+    ? 'Elapsed measured from the record’s own timestamp.'
+    : 'Elapsed measured from the record’s timestamp, read as Melbourne local time (the feed states no zone).';
+}
+
+/**
+ * The response-size control.
+ *
+ * Rendered as a real `<select>` rather than a row of buttons because the list
+ * runs to eleven options on FRV ground, and because a native control gets
+ * keyboard and screen-reader behaviour for free.
+ *
+ * @param {object[]} plans Plans available for this incident.
+ * @param {string} activeId The selected plan.
+ * @returns {string} Markup.
+ */
+function responseSizeControl(plans, activeId) {
+  return `
+    <label class="pm-detail-plan">
+      <span class="pm-detail-plan-label">Response</span>
+      <select class="pm-detail-plan-select" data-action="plan">
+        ${plans.map((plan) => `<option value="${escapeHtml(plan.id)}"${plan.id === activeId ? ' selected' : ''}>`
+          + `${escapeHtml(plan.label)}${plan.sourced ? '' : ' (est.)'}</option>`).join('')}
+      </select>
+    </label>`;
+}
+
+/**
+ * Resolve, chart, and draw the response for one incident.
  *
  * Exported for the tests, which drive it against a stub rather than the real
  * snapshot and annotation engine.
@@ -366,9 +518,15 @@ export function brigadeLineLabel(station) {
  * @param {HTMLElement} panel The open detail panel.
  * @param {{latitude: number, longitude: number}} origin Incident position.
  * @param {HTMLButtonElement} button The clicked control.
+ * @param {object} [options]
+ * @param {string} [options.incidentTime] Raw record timestamp.
+ * @param {string} [options.planId] Response size to run.
  * @returns {Promise<void>}
  */
-export async function showNearestBrigades(panel, origin, button) {
+export async function showNearestBrigades(panel, origin, button, {
+  incidentTime = '',
+  planId = DEFAULT_PLAN_ID,
+} = {}) {
   const out = panel.querySelector('.pm-detail-brigades');
   if (!out) return;
 
@@ -380,27 +538,84 @@ export async function showNearestBrigades(panel, origin, button) {
     button.disabled = true;
     button.textContent = 'Finding…';
   }
+  // A re-run at a new response size replaces the chart node the old ticker
+  // holds. Stop it here rather than relying on the node-detached check, which
+  // would leave one stale tick able to fire against the outgoing markup.
+  stopTimelineTicker();
   out.hidden = false;
   out.innerHTML = '<p class="pm-detail-note">Searching the station gazetteer…</p>';
 
+  const plan = resolvePlan(planId);
+
   try {
-    const stations = await findNearest(origin, BRIGADE_COUNT);
+    // Concurrent: the FRV test only decides which MENU to draw, so waiting for
+    // it before starting the station lookup would delay the answer for a
+    // question about the control beside it.
+    const [stations, frv] = await Promise.all([
+      findNearest(origin, stationCount(plan)),
+      inFrvArea(origin),
+    ]);
+
     if (stations.length === 0) {
       out.innerHTML = '<p class="pm-detail-note">No fire stations found near this position.</p>';
       return;
     }
 
+    const incident = parseIncidentTime(incidentTime);
+    const incidentMs = incident ? incident.ms : null;
+    const model = buildTimeline(stations, { incidentMs });
+    const plans = plansFor(frv);
+    // A plan gated to the other agency's ground (a Make Tankers held over from
+    // a CFA job, then clicked on an FRV one) is not in the menu. Fall the
+    // SELECT back to the default rather than showing an empty control — the
+    // results below it are still the ones that plan asked for.
+    const activeId = plans.some((entry) => entry.id === plan.id) ? plan.id : DEFAULT_PLAN_ID;
+
     out.innerHTML = `
-      <div class="pm-detail-brigade-head">Nearest ${stations.length === 1 ? 'station' : `${stations.length} stations`}</div>
-      ${stations.map((station) => `
+      <div class="pm-detail-brigade-head">
+        Response timeline · ${stations.length} station${stations.length === 1 ? '' : 's'}
+      </div>
+      ${responseSizeControl(plans, activeId)}
+      <div class="pm-detail-plan-note">${escapeHtml(plan.note)}</div>
+      <div class="rt-legend">
+        <span class="rt-key rt-key-sds">SDS turnout</span>
+        <span class="rt-key rt-key-travel">Code 1 turnout</span>
+        ${model.incidentKnown ? '<span class="rt-key rt-key-now">now</span>' : ''}
+      </div>
+      <div class="rt-chart-host"></div>
+      ${stations.map((station, index) => {
+        const row = model.rows[index];
+        const status = rowStatus(model.elapsedS, row.sdsS, row.totalS);
+        const statusText = status ? ` · ${STATUS_LABEL[status]}` : '';
+        return `
         <div class="pm-detail-brigade">
           <div class="pm-detail-row">
-            <span class="pm-detail-value">${escapeHtml(station.name)}</span>
+            <span class="pm-detail-value">${escapeHtml(`${row.rank}. ${station.name}`)}</span>
             <span class="pm-detail-label">${escapeHtml(brigadeTime(station))}</span>
           </div>
-          <div class="pm-detail-brigade-sub">${escapeHtml(brigadeSubline(station))}</div>
-        </div>`).join('')}
+          <div class="pm-detail-brigade-sub">${escapeHtml(brigadeSubline(station) + statusText)}</div>
+        </div>`;
+      }).join('')}
+      <p class="pm-detail-note">${escapeHtml(timelineOriginNote(incident))}</p>
       <p class="pm-detail-note">${escapeHtml(BRIGADE_DISCLAIMER)}</p>`;
+
+    // Optional throughout: the chart and the size control are enhancements over
+    // the list, and the list is the answer. A container that cannot be queried
+    // (the panel stub in the tests, or any future host that only renders text)
+    // loses the chart and keeps the stations, which is the same trade
+    // `drawBrigadeMarks` makes when the annotation engine is not up.
+    const host = out.querySelector?.('.rt-chart-host');
+    if (host) {
+      renderTimelineInto(host, stations, incidentMs);
+      startTimelineTicker(host, stations, incidentMs);
+    }
+
+    out.querySelector?.('[data-action="plan"]')?.addEventListener('change', (event) => {
+      showNearestBrigades(panel, origin, button, {
+        incidentTime,
+        planId: event.currentTarget.value,
+      });
+    });
 
     drawBrigadeMarks(origin, stations);
   } catch (error) {
@@ -411,7 +626,7 @@ export async function showNearestBrigades(panel, origin, button) {
   } finally {
     if (button) {
       button.disabled = false;
-      button.textContent = 'Nearest brigades';
+      button.textContent = 'Response timeline';
     }
   }
 }
@@ -453,7 +668,13 @@ function drawBrigadeMarks(origin, stations) {
   const engine = _annotations();
   if (!engine?.annotate) return;
   try {
-    engine.annotate(stations.flatMap((station) => ([
+    // Capped independently of the panel's list. A Make Tankers 25 is a
+    // legible table and an illegible map: twenty-five pins carrying
+    // 45-character station names, all converging on one point, overlap into a
+    // block of text with no fire visible under it. The panel keeps every
+    // station; the globe shows the near end of the response, which is the part
+    // a reader can still tell apart.
+    engine.annotate(stations.slice(0, MAX_DRAWN_BRIGADES).flatMap((station) => ([
       {
         // A PIN at the station, carrying the whole label.
         //
@@ -500,6 +721,7 @@ function drawBrigadeMarks(origin, stations) {
 
 /** Hide the panel and drop its contents. */
 export function hidePassiveMonitorDetail() {
+  stopTimelineTicker();
   if (!_panel) return;
   _panel.hidden = true;
   _panel.innerHTML = '';

@@ -61,47 +61,105 @@ export function pointInPolygons(lon, lat, polygons) {
 }
 
 /**
- * Parse a bundled snapshot into polygon ring arrays.
+ * Read the feature list out of a bundled snapshot.
  *
  * Reads the same two wire formats the local-layer loader sniffs (JSON Lines
  * and a FeatureCollection) and skips a malformed row rather than throwing.
- * MultiPolygons are flattened into their parts.
+ * Shared by both parsers below so the sniffing lives in one place.
+ *
+ * @param {string} text Raw snapshot body.
+ * @returns {object[]} GeoJSON features.
+ */
+function readFeatures(text) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (parsed && Array.isArray(parsed.features)) return parsed.features;
+    if (Array.isArray(parsed)) return parsed;
+  } catch {
+    // Expected for JSON Lines.
+  }
+
+  const features = [];
+  for (const line of trimmed.split('\n')) {
+    if (!line.trim()) continue;
+    try {
+      features.push(JSON.parse(line));
+    } catch {
+      // Skip the row, keep the rest.
+    }
+  }
+  return features;
+}
+
+/** Every polygon part of one feature, as `[outer, ...holes]` rings. */
+function featureParts(feature) {
+  const geometry = feature?.geometry;
+  if (geometry?.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+    return [geometry.coordinates];
+  }
+  if (geometry?.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
+    return geometry.coordinates;
+  }
+  return [];
+}
+
+/**
+ * Parse a bundled snapshot into polygon ring arrays.
+ *
+ * MultiPolygons are flattened into their parts. Use this when the only
+ * question is inside-or-outside; `parseNamedPolygonFeatures` keeps the
+ * property that says WHICH region was hit.
  *
  * @param {string} text Raw snapshot body.
  * @returns {number[][][][]} Polygons, each `[outer, ...holes]`.
  */
 export function parsePolygonFeatures(text) {
-  const trimmed = String(text || '').trim();
-  if (!trimmed) return [];
-
-  let features = null;
-  try {
-    const parsed = JSON.parse(trimmed);
-    if (parsed && Array.isArray(parsed.features)) features = parsed.features;
-    else if (Array.isArray(parsed)) features = parsed;
-  } catch {
-    // Expected for JSON Lines.
-  }
-  if (!features) {
-    features = [];
-    for (const line of trimmed.split('\n')) {
-      if (!line.trim()) continue;
-      try {
-        features.push(JSON.parse(line));
-      } catch {
-        // Skip the row, keep the rest.
-      }
-    }
-  }
-
   const polygons = [];
-  for (const feature of features) {
-    const geometry = feature?.geometry;
-    if (geometry?.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
-      polygons.push(geometry.coordinates);
-    } else if (geometry?.type === 'MultiPolygon' && Array.isArray(geometry.coordinates)) {
-      for (const part of geometry.coordinates) polygons.push(part);
-    }
+  for (const feature of readFeatures(text)) {
+    for (const part of featureParts(feature)) polygons.push(part);
   }
   return polygons;
+}
+
+/**
+ * Parse a snapshot keeping each part's name, for "which region is this in?".
+ *
+ * The plain parser above throws the properties away, which is right for a
+ * single-region boundary like the FRV response area and useless for a
+ * partitioned one like the 21 CFA districts — there the answer IS the name.
+ *
+ * Parts are kept separate rather than grouped by name: a multipart district
+ * tests the same either way, and flattening keeps the hit test a single loop.
+ *
+ * @param {string} text Raw snapshot body.
+ * @param {function(object): string} [nameOf] Reads the name from properties.
+ * @returns {{name: string, rings: number[][][]}[]} Named polygon parts.
+ */
+export function parseNamedPolygonFeatures(text, nameOf = (props) => props?.name) {
+  const named = [];
+  for (const feature of readFeatures(text)) {
+    const name = String(nameOf(feature?.properties || {}) ?? '').trim();
+    if (!name) continue;
+    for (const rings of featureParts(feature)) named.push({ name, rings });
+  }
+  return named;
+}
+
+/**
+ * The name of the first named polygon containing a point, honouring holes.
+ *
+ * @param {number} lon Test longitude.
+ * @param {number} lat Test latitude.
+ * @param {{name: string, rings: number[][][]}[]} named Named polygon parts.
+ * @returns {string|null} The region name, or null when the point is in none.
+ */
+export function nameAtPoint(lon, lat, named) {
+  if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Array.isArray(named)) return null;
+  for (const entry of named) {
+    if (pointInPolygons(lon, lat, [entry?.rings])) return entry.name;
+  }
+  return null;
 }

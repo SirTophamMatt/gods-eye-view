@@ -12,13 +12,33 @@ import {
  * The action only ever touches `querySelector`, `innerHTML` and `hidden`, so a
  * hand-rolled stub is both sufficient and honest about the coupling — pulling
  * in a DOM implementation would hide how small that surface is.
+ *
+ * The result node answers `querySelector` too, for the timeline chart host and
+ * the response-size control. `withNodes: false` drops that method, which is how
+ * the "the list survives without the chart" case is driven: the action must
+ * degrade to the station list rather than reporting a failure.
  */
-function fakePanel() {
+function fakePanel({ withNodes = true } = {}) {
+  const nodes = new Map();
   const out = { innerHTML: '', hidden: true };
-  const button = { disabled: false, textContent: 'Nearest brigades' };
+  if (withNodes) {
+    out.querySelector = (selector) => {
+      if (!nodes.has(selector)) {
+        nodes.set(selector, {
+          innerHTML: '',
+          isConnected: true,
+          listeners: {},
+          addEventListener(type, handler) { this.listeners[type] = handler; },
+        });
+      }
+      return nodes.get(selector);
+    };
+  }
+  const button = { disabled: false, textContent: 'Response timeline' };
   return {
     out,
     button,
+    nodes,
     querySelector(selector) {
       if (selector === '.pm-detail-brigades') return out;
       return null;
@@ -88,11 +108,16 @@ test('the action lists the stations and draws one line to each', async () => {
   assert.ok(panel.out.innerHTML.includes('0.9 km by road'), 'the road distance sits under it');
   assert.ok(panel.out.innerHTML.includes('FRV (career)'), 'career stations are marked');
   assert.ok(panel.out.innerHTML.includes('CFA (likely volunteer)'), 'and volunteer ones');
-  assert.ok(panel.out.innerHTML.includes('Nearest 3 stations'));
+  assert.ok(panel.out.innerHTML.includes('Response timeline · 3 stations'));
   assert.match(
     panel.out.innerHTML,
-    /Code 1 drive time only — excludes turnout/,
-    'the number never pretends to be a response time',
+    /SDS is the turnout STANDARD/,
+    'the left half never pretends to be a measured turnout',
+  );
+  assert.match(
+    panel.out.innerHTML,
+    /not a position report/,
+    'nor does the marker pretend to be one',
   );
   assert.match(
     panel.out.innerHTML,
@@ -149,7 +174,7 @@ test('the action lists the stations and draws one line to each', async () => {
   }
 
   assert.equal(panel.button.disabled, false, 'the control is released');
-  assert.equal(panel.button.textContent, 'Nearest brigades');
+  assert.equal(panel.button.textContent, 'Response timeline');
 });
 
 test('station names are escaped, never interpolated as markup', async () => {
@@ -225,4 +250,159 @@ test('a missing annotation engine still leaves the reader an answer', async () =
   await showNearestBrigades(panel, ORIGIN, panel.button);
 
   assert.ok(panel.out.innerHTML.includes('Ballarat City Fire Station'));
+});
+
+test('the response size drives how many stations are asked for', async () => {
+  const asked = [];
+  _setBrigadeDepsForTest({
+    findNearest: async (origin, count) => { asked.push(count); return STATIONS; },
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+  await showNearestBrigades(panel, ORIGIN, panel.button, { planId: 'mt15' });
+  await showNearestBrigades(panel, ORIGIN, panel.button, { planId: 'mt25' });
+
+  assert.deepEqual(asked, [3, 15, 25]);
+});
+
+test('the menu offers the vocabulary of the ground the incident is on', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => STATIONS,
+    inFrvArea: async () => true,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+
+  assert.match(panel.out.innerHTML, /Alarm \(GARS\)/, 'an FRV job gets alarm levels');
+  assert.ok(!panel.out.innerHTML.includes('Make Tankers'), 'and no Make Tankers');
+  // Only the FRV-published figure is offered unqualified.
+  assert.match(panel.out.innerHTML, /1st Alarm \(GARS\) \(est\.\)/);
+  assert.ok(
+    !panel.out.innerHTML.includes('3rd Alarm (GARS) (est.)'),
+    'the published 3rd Alarm figure is not marked estimated',
+  );
+});
+
+test('a size held over from the other agency falls back rather than showing empty', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => STATIONS,
+    inFrvArea: async () => true,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button, { planId: 'mt25' });
+
+  // The results are still the 25 that plan asked for; only the CONTROL resets,
+  // because "Make Tankers 25" is not in an FRV menu to select.
+  assert.match(panel.out.innerHTML, /value="general" selected/);
+});
+
+test('the turnout standard reaches the station sub-line', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => [{
+      ...STATIONS[0],
+      sds: { seconds: 240, label: 'CFA D8 metro standard' },
+    }],
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+
+  assert.match(panel.out.innerHTML, /SDS 4:00/);
+});
+
+test('a known incident time produces an elapsed marker and per-station status', async () => {
+  const created = new Date(Date.now() - 200_000).toISOString();
+  _setBrigadeDepsForTest({
+    findNearest: async () => [{
+      ...STATIONS[0],
+      code1S: 95,
+      sds: { seconds: 240, label: 'CFA D8 metro standard' },
+    }],
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button, { incidentTime: created });
+
+  // 200 s elapsed against a 240 s standard: still turning out.
+  assert.match(panel.out.innerHTML, /turning out/);
+  assert.match(panel.out.innerHTML, /Elapsed measured from the record’s own timestamp/);
+  const host = panel.nodes.get('.rt-chart-host');
+  assert.match(host.innerHTML, /rt-now/, 'the marker is drawn into the chart host');
+});
+
+test('an unusable incident time charts the plan and claims no elapsed marker', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => [{ ...STATIONS[0], sds: { seconds: 240, label: '' } }],
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button, { incidentTime: 'some time ago' });
+
+  assert.match(panel.out.innerHTML, /No usable incident timestamp/);
+  const host = panel.nodes.get('.rt-chart-host');
+  assert.ok(!host.innerHTML.includes('rt-now'), 'no marker without an origin');
+  assert.match(host.innerHTML, /--rt-sds/, 'but the plan is still charted');
+});
+
+test('a bare wall-clock timestamp says the zone was assumed', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => [{ ...STATIONS[0], sds: { seconds: 240, label: '' } }],
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button, { incidentTime: '2026-09-01 23:56:31' });
+
+  assert.match(panel.out.innerHTML, /read as Melbourne local time/);
+});
+
+test('the globe is capped even when the panel lists a full strike team', async () => {
+  const drawn = [];
+  const many = Array.from({ length: 25 }, (unused, index) => ({
+    name: `Station ${index + 1}`,
+    latitude: -37.5 - (index * 0.01),
+    longitude: 143.8,
+    distanceKm: index + 1,
+    agency: 'cfa',
+    sds: { seconds: 480, label: '' },
+  }));
+  _setBrigadeDepsForTest({
+    findNearest: async () => many,
+    inFrvArea: async () => false,
+    annotations: () => ({ annotate: (specs) => drawn.push(specs) }),
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button, { planId: 'mt25' });
+
+  assert.ok(panel.out.innerHTML.includes('Station 25'), 'every station is still listed');
+  assert.equal(drawn[0].length, 20, 'a pin and a route for the first ten only');
+});
+
+test('the list survives a host that cannot be queried for the chart', async () => {
+  _setBrigadeDepsForTest({
+    findNearest: async () => STATIONS,
+    inFrvArea: async () => false,
+    annotations: () => null,
+  });
+
+  const panel = fakePanel({ withNodes: false });
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+
+  assert.ok(panel.out.innerHTML.includes('Wendouree Fire Station'), 'the answer survives');
+  assert.ok(!panel.out.innerHTML.includes('Station list unavailable'), 'and is not reported as a failure');
 });

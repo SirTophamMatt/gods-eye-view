@@ -136,6 +136,9 @@ export function createPagerFeed({
       const resolvedIndex = await ensureIndex();
 
       const fresh = [];
+      // Pages in THIS window that no station matched — recomputed per poll,
+      // not accumulated, and counted per page rather than per distinct
+      // capcode. One unmatched brigade paging three times counts three.
       let unresolved = 0;
       // Upstream returns newest first; walk oldest first so the announced
       // batch reads in the order the pages actually happened.

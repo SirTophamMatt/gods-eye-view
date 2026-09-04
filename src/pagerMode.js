@@ -176,10 +176,15 @@ export function pagerTickerHtml(status, history) {
     body = history.map(pagerRowHtml).join('');
   }
 
-  // The unplaced count belongs in the header, permanently visible: it is the
-  // one number that says how much of the network this mode cannot show you.
+  // The unplaced count belongs in the header, permanently visible: it is what
+  // stops a gap in the station index from reading as a quiet night.
+  //
+  // It counts PAGES in the latest poll window, not distinct capcodes and not
+  // the whole network — one unmatched brigade paging three times reads as
+  // "3 unplaced". That is the honest scope for a ticker showing that same
+  // window, and the tooltip says so rather than implying a census.
   const unplaced = status.unresolved > 0
-    ? `<span class="pager-head-warn" title="Capcodes with no matching station">${status.unresolved} unplaced</span>`
+    ? `<span class="pager-head-warn" title="Recent pages with no matching station">${status.unresolved} unplaced</span>`
     : '';
   const dot = status.live ? 'pager-dot-live' : 'pager-dot-down';
 

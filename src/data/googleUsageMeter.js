@@ -34,6 +34,15 @@ const FLUSH_MS = 5000;
 
 /** Matches the Map Tiles API host, and nothing else Google serves. */
 const TILE_HOST = 'tile.googleapis.com';
+/**
+ * The root tileset request — the ONLY billable event on the 3D Tiles SKU.
+ *
+ * Everything else under `tile.googleapis.com` is a renderer tile fetch, which
+ * Google bills at nothing and does not count against quota. Distinguishing
+ * these two is the entire point of this classifier: they differ by three orders
+ * of magnitude in volume and by all of the cost.
+ */
+const ROOT_TILESET = /\/3dtiles\/root\.json/;
 /** This app's own Places proxy path. */
 const PLACES_PATH = '/api/google/';
 
@@ -42,16 +51,19 @@ let _timer = null;
 let _hideHandler = null;
 let _counter = null;
 /** Counts seen since the last flush. */
-let _pending = { tiles: 0, places: 0 };
+let _pending = { sessions3d: 0, places: 0, tileFetches: 0 };
 
 /**
- * Classify one resource entry.
+ * Classify one resource entry by what it costs.
+ *
  * @param {string} name Resource URL.
- * @returns {'tiles'|'places'|null} Surface, or null when it is not ours.
+ * @returns {'sessions3d'|'places'|'tileFetches'|null} Surface, null when not ours.
  */
 export function classifyResource(name) {
   const url = String(name || '');
-  if (url.includes(TILE_HOST)) return 'tiles';
+  if (url.includes(TILE_HOST)) {
+    return ROOT_TILESET.test(url) ? 'sessions3d' : 'tileFetches';
+  }
   if (url.includes(PLACES_PATH)) return 'places';
   return null;
 }
@@ -59,10 +71,11 @@ export function classifyResource(name) {
 /** Write pending counts through and refresh the readout. */
 function flush() {
   if (_counter) {
-    if (_pending.tiles > 0) _counter.record('tiles', _pending.tiles);
-    if (_pending.places > 0) _counter.record('places', _pending.places);
+    for (const [surface, n] of Object.entries(_pending)) {
+      if (n > 0) _counter.record(surface, n);
+    }
   }
-  _pending = { tiles: 0, places: 0 };
+  _pending = { sessions3d: 0, places: 0, tileFetches: 0 };
   render();
 }
 
@@ -133,12 +146,14 @@ export function stopGoogleUsageMeter() {
 
 /** Today's counts, for callers that want the numbers rather than the readout. */
 export function googleUsageToday() {
-  return _counter ? _counter.today() : { day: '', tiles: 0, places: 0 };
+  return _counter
+    ? _counter.today()
+    : { day: '', sessions3d: 0, places: 0, tileFetches: 0, billable: 0 };
 }
 
 /** Clear the stored tally. Exposed so a user can reset the readout. */
 export function resetGoogleUsage() {
-  _pending = { tiles: 0, places: 0 };
+  _pending = { sessions3d: 0, places: 0, tileFetches: 0 };
   _counter?.reset();
   render();
 }

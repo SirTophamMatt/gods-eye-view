@@ -187,7 +187,7 @@ export class IntelHUD {
           <!-- Requests THIS BROWSER has made against the Google key today.
                Not account usage — Google exposes none to a browser. The full
                caveat rides on the element's title; see googleUsage.js. -->
-          <div id="hud-google-usage" class="hud-google-usage">MAPS: 0 TILES · 0 PLACES</div>
+          <div id="hud-google-usage" class="hud-google-usage">MAPS: 0 3D · 0 PLACES</div>
         </div>
         <div class="hud-bracket">┘</div>
       </div>

@@ -38,24 +38,30 @@ test('counts accumulate per surface on the current quota day', () => {
   let now = Date.parse('2026-09-05T20:00:00Z'); // 13:00 Pacific, 2026-09-05
   const counter = createUsageCounter({ storage, now: () => now });
 
-  counter.record('tiles', 120);
-  counter.record('tiles', 30);
+  counter.record('sessions3d', 2);
+  counter.record('sessions3d', 1);
   counter.record('places');
+  counter.record('tileFetches', 41_000);
 
-  assert.deepEqual(counter.today(), { day: '2026-09-05', tiles: 150, places: 1 });
+  const today = counter.today();
+  assert.equal(today.sessions3d, 3);
+  assert.equal(today.places, 1);
+  assert.equal(today.tileFetches, 41_000);
+  assert.equal(today.billable, 4, 'free tile fetches are excluded from the billable total');
 });
 
 test('a new quota day starts from zero without losing the old one', () => {
   const storage = fakeStorage();
   let now = Date.parse('2026-09-05T20:00:00Z');
   const counter = createUsageCounter({ storage, now: () => now });
-  counter.record('tiles', 500);
+  counter.record('sessions3d', 500);
 
   now = Date.parse('2026-09-06T20:00:00Z');
-  assert.deepEqual(counter.today(), { day: '2026-09-06', tiles: 0, places: 0 });
-  counter.record('tiles', 7);
-  assert.equal(counter.all()['2026-09-05'].tiles, 500, 'yesterday is retained');
-  assert.equal(counter.all()['2026-09-06'].tiles, 7);
+  assert.equal(counter.today().sessions3d, 0);
+  assert.equal(counter.today().day, '2026-09-06');
+  counter.record('sessions3d', 7);
+  assert.equal(counter.all()['2026-09-05'].sessions3d, 500, 'yesterday is retained');
+  assert.equal(counter.all()['2026-09-06'].sessions3d, 7);
 });
 
 test('only the last seven days are kept', () => {
@@ -63,7 +69,7 @@ test('only the last seven days are kept', () => {
   let now = Date.parse('2026-09-01T20:00:00Z');
   const counter = createUsageCounter({ storage, now: () => now });
   for (let i = 0; i < 12; i += 1) {
-    counter.record('tiles', 1);
+    counter.record('sessions3d', 1);
     now += 24 * 3600 * 1000;
   }
   const days = Object.keys(counter.all()).sort();
@@ -75,20 +81,21 @@ test('an unknown surface and a nonsense count are ignored, not recorded', () => 
   const storage = fakeStorage();
   const counter = createUsageCounter({ storage, now: () => Date.parse('2026-09-05T20:00:00Z') });
   counter.record('geocoding', 10);
-  counter.record('tiles', -5);
-  counter.record('tiles', Number.NaN);
-  counter.record('tiles', 'lots');
-  assert.deepEqual(counter.today(), { day: '2026-09-05', tiles: 0, places: 0 });
+  counter.record('sessions3d', -5);
+  counter.record('sessions3d', Number.NaN);
+  counter.record('sessions3d', 'lots');
+  assert.equal(counter.today().sessions3d, 0);
+  assert.equal(counter.today().billable, 0);
 });
 
 test('a corrupt or hostile stored value resets rather than throwing', () => {
   // A readout losing a day's count is a far smaller failure than a HUD that
   // will not render.
-  for (const raw of ['not json', '[]', 'null', '{"2026-09-05":"nope"}', '{"junk":{"tiles":5}}']) {
+  for (const raw of ['not json', '[]', 'null', '{"2026-09-05":"nope"}', '{"junk":{"sessions3d":5}}']) {
     const storage = fakeStorage({ [USAGE_STORAGE_KEY]: raw });
     assert.doesNotThrow(() => readUsage(storage));
     const counter = createUsageCounter({ storage, now: () => Date.parse('2026-09-05T20:00:00Z') });
-    assert.equal(counter.today().tiles, 0);
+    assert.equal(counter.today().sessions3d, 0);
   }
 });
 
@@ -101,11 +108,11 @@ test('a storage that throws still counts, it just cannot remember', () => {
     setItem() { throw new Error('blocked'); },
   };
   const counter = createUsageCounter({ storage: hostile, now: () => Date.parse('2026-09-05T20:00:00Z') });
-  assert.doesNotThrow(() => counter.record('tiles', 5));
-  assert.equal(counter.today().tiles, 5, 'this session still counts');
+  assert.doesNotThrow(() => counter.record('sessions3d', 5));
+  assert.equal(counter.today().sessions3d, 5, 'this session still counts');
 
   const fresh = createUsageCounter({ storage: hostile, now: () => Date.parse('2026-09-05T20:00:00Z') });
-  assert.equal(fresh.today().tiles, 0, 'but nothing was persisted');
+  assert.equal(fresh.today().sessions3d, 0, 'but nothing was persisted');
 });
 
 test('pruning never mutates its input', () => {
@@ -115,9 +122,13 @@ test('pruning never mutates its input', () => {
   assert.equal(Object.keys(usage).length, 2);
 });
 
-test('resources are classified by which surface bills for them', () => {
-  assert.equal(classifyResource('https://tile.googleapis.com/v1/3dtiles/root.json?key=x'), 'tiles');
-  assert.equal(classifyResource('https://tile.googleapis.com/v1/3dtiles/datasets/CgIYAQ/files/abc'), 'tiles');
+test('resources are classified by what they COST, not by host', () => {
+  // The whole correctness of the readout is here. Google bills the root
+  // tileset request and nothing else on this SKU: "Only root tileset requests
+  // are billable ... Unlimited renderer-originating tile requests per day."
+  // Counting tile fetches as spend made an idle globe look like $400.
+  assert.equal(classifyResource('https://tile.googleapis.com/v1/3dtiles/root.json?key=x'), 'sessions3d');
+  assert.equal(classifyResource('https://tile.googleapis.com/v1/3dtiles/datasets/CgIYAQ/files/abc'), 'tileFetches');
   assert.equal(classifyResource('http://localhost:5173/api/google/nearby-places?lat=1&lon=2'), 'places');
   // Fonts are Google, and are free. Counting them would inflate the figure
   // people are using to judge a bill.
@@ -138,12 +149,15 @@ test('big counts abbreviate, small ones stay exact', () => {
   assert.equal(formatCount('nonsense'), '0');
 });
 
-test('the readout says TODAY, and the tooltip says what it cannot see', () => {
-  const line = formatUsageLine({ tiles: 12_400, places: 18 });
-  assert.equal(line, 'MAPS: 12k TILES · 18 PLACES');
+test('the readout shows only what bills, and the tooltip explains the rest', () => {
+  const line = formatUsageLine({ sessions3d: 12, places: 4, tileFetches: 41_000 });
+  assert.equal(line, 'MAPS: 12 3D · 4 PLACES');
+  assert.ok(!line.includes('41'), 'free tile fetches never reach the readout');
 
-  const tip = usageTooltip({ day: '2026-09-05' });
+  const tip = usageTooltip({ day: '2026-09-05', sessions3d: 12, places: 4, tileFetches: 41_000 });
   assert.match(tip, /THIS BROWSER/, 'the scope is stated');
+  assert.match(tip, /free and unmetered/, 'the free tiles are named as free');
+  assert.match(tip, /41k/, 'and still reported, just not as spend');
   assert.match(tip, /Not your account total/, 'and what it is not');
   assert.match(tip, /quota cap/, 'and where a real limit is set');
 });

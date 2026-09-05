@@ -16,13 +16,23 @@
  * quota cap in Cloud Console. A number on the HUD is situational awareness. It
  * is not a spend cap, and the copy beside it must not imply that it is.
  *
- * TWO SURFACES are counted, because they bill separately and behave differently:
+ * WHAT ACTUALLY BILLS, which is the whole reason this module is careful:
  *
- *   tiles   Map Tiles API — Photorealistic 3D Tiles. Fetched by Cesium
- *           STRAIGHT FROM THE BROWSER to tile.googleapis.com, so the dev
- *           server never sees them and only the client can count them.
- *   places  Places API, via this app's own /api/google/nearby-places proxy.
- *           Server-brokered, so the count here is this browser's share of it.
+ *   sessions3d   Map Tiles API — Photorealistic 3D Tiles. Billed per ROOT
+ *                TILESET request (`/v1/3dtiles/root.json`), which is one per
+ *                page load and covers up to three hours of renderer tile
+ *                fetches. Google: "Only root tileset requests are billable …
+ *                Unlimited renderer-originating tile requests per day."
+ *   places       Places API (New) `places:searchNearby`, via this app's own
+ *                /api/google/nearby-places proxy. One billable event per call,
+ *                and only the voice assistant makes them.
+ *   tileFetches  The individual tiles. FREE and unmetered — counted only so the
+ *                readout can say so, because a five-figure tile count next to a
+ *                dollar sign is exactly the wrong impression to leave.
+ *
+ * Counting tile fetches as spend was this module's first mistake: it made an
+ * idle globe look like $400 of traffic when the true cost was one root request.
+ * If a future surface is added, check its SKU before counting it.
  *
  * THE DAY BOUNDARY is Pacific, not local and not UTC. Google Maps Platform
  * daily quotas reset at midnight America/Los_Angeles, so a tally keyed any
@@ -36,8 +46,17 @@
 /** localStorage key, following the repo's `godsEyeView.<feature>.<field>`. */
 export const USAGE_STORAGE_KEY = 'godsEyeView.googleUsage.daily';
 
-/** Surfaces worth counting apart. */
-export const USAGE_SURFACES = Object.freeze(['tiles', 'places']);
+/**
+ * Surfaces worth counting apart.
+ *
+ * These are BILLABLE EVENTS, which is not the same as requests. See the header:
+ * a 3D-tile session is one root-tileset request no matter how many thousands of
+ * renderer tiles follow it, and those tiles are free and unmetered.
+ */
+export const USAGE_SURFACES = Object.freeze(['sessions3d', 'places', 'tileFetches']);
+
+/** The subset that actually costs money. `tileFetches` is free, and shown as such. */
+export const BILLABLE_SURFACES = Object.freeze(['sessions3d', 'places']);
 
 /** How many past days are kept. Enough to see a trend, small enough to ignore. */
 const RETAIN_DAYS = 7;
@@ -173,16 +192,19 @@ export function createUsageCounter({ storage, now = Date.now, timeZone } = {}) {
 
     /**
      * Today's counts.
-     * @returns {{day: string, tiles: number, places: number}}
+     * @returns {{day: string, sessions3d: number, places: number, tileFetches: number, billable: number}}
      */
     today() {
       const day = quotaDayKey(now(), timeZone);
       const row = load()[day] || {};
-      return {
+      const counts = {
         day,
-        tiles: Number(row.tiles) || 0,
+        sessions3d: Number(row.sessions3d) || 0,
         places: Number(row.places) || 0,
+        tileFetches: Number(row.tileFetches) || 0,
       };
+      counts.billable = BILLABLE_SURFACES.reduce((sum, key) => sum + counts[key], 0);
+      return counts;
     },
 
     /** The whole retained tally, for a caller that wants a trend. */
@@ -219,27 +241,33 @@ export function formatCount(value) {
 /**
  * The HUD line.
  *
- * Says TODAY explicitly. Without it the number reads as a running total and
- * looks alarming after a week, or as an all-time figure and looks reassuring
- * after an hour — and it is neither.
+ * Shows BILLABLE events, and says TODAY. The free tile fetches are deliberately
+ * NOT here — putting a five-figure number on a readout people are reading to
+ * judge a bill implies a cost that does not exist. They live in the tooltip,
+ * labelled free.
  *
- * @param {{tiles: number, places: number}} counts Today's counts.
- * @returns {string} e.g. "MAPS: 12.4k TILES · 18 PLACES".
+ * @param {{sessions3d: number, places: number}} counts Today's counts.
+ * @returns {string} e.g. "MAPS: 12 3D · 4 PLACES".
  */
 export function formatUsageLine(counts) {
-  const tiles = formatCount(counts?.tiles);
+  const sessions = formatCount(counts?.sessions3d);
   const places = formatCount(counts?.places);
-  return `MAPS: ${tiles} TILES · ${places} PLACES`;
+  return `MAPS: ${sessions} 3D · ${places} PLACES`;
 }
 
 /**
  * The hover text, which carries every caveat the one-line readout cannot.
- * @param {{day: string}} counts Today's counts.
+ * @param {object} counts Today's counts.
  * @returns {string} Title text.
  */
 export function usageTooltip(counts) {
-  return `Google Maps Platform requests made by THIS BROWSER on ${counts?.day || 'today'}`
-    + ' (quota day resets midnight US Pacific, matching Cloud Console).'
+  const free = formatCount(counts?.tileFetches);
+  return `Billable Google Maps events from THIS BROWSER on ${counts?.day || 'today'}`
+    + ` — ${formatCount(counts?.sessions3d)} 3D tile session(s) and`
+    + ` ${formatCount(counts?.places)} Places call(s). A 3D session is one root-tileset`
+    + ` request per page load, covering up to 3 hours; the ${free} individual tiles it`
+    + ' streamed are free and unmetered.'
+    + ' Quota day resets midnight US Pacific, matching Cloud Console.'
     + ' Not your account total: it cannot see other devices, other people, or'
     + ' anyone else using the key. For a real spend limit set an HTTP-referrer'
     + ' restriction and a per-API quota cap in Google Cloud Console.';

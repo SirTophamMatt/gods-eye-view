@@ -117,6 +117,21 @@ let _annotations = () => window.__gevAnnotations || null;
 let _timelineTimer = null;
 
 /**
+ * Signature of the record the open panel is currently showing.
+ *
+ * A live layer re-selects its entity after every poll so an open selection
+ * survives the swap — which re-fires `gev:entity-selected` with a record that
+ * is usually identical to the one already on screen. Rebuilding on that would
+ * throw away an expanded response timeline every couple of minutes, which is
+ * the whole thing the re-selection exists to protect.
+ *
+ * So an unchanged record is a no-op and a CHANGED one still rebuilds: if the
+ * status moved from "Responding" to "Under Control", the reader needs to see
+ * that more than they need their timeline left open.
+ */
+let _renderedSignature = null;
+
+/**
  * Resolve the station lookup, importing it on first use.
  *
  * Dynamic rather than a top-level import for two reasons. It keeps the
@@ -236,6 +251,32 @@ function formatTimestamp(value) {
  * @param {object} props Unwrapped feature properties.
  * @returns {string} Note text.
  */
+/**
+ * What makes one rendered record different from another.
+ *
+ * Identity plus the whole property bag, so ANY change the feed makes — status,
+ * detail, severity, timestamp, or the stale marking — rebuilds the panel, and
+ * nothing else does. Deliberately not a hand-picked field list: a field added
+ * upstream would silently stop refreshing the panel until someone remembered
+ * to add it here.
+ *
+ * @param {object} record Context-store record.
+ * @param {object} props Its unwrapped properties.
+ * @returns {string|null} Signature, or null when it cannot be computed.
+ */
+export function recordSignature(record, props) {
+  try {
+    // Position is part of the record, not of `props`, and it decides whether
+    // the panel offers the brigade action at all — a record arriving without a
+    // usable centroid and then with one must rebuild, or the button never
+    // appears.
+    const at = `${record?.latitude ?? ''},${record?.longitude ?? ''}`;
+    return `${text(record?.layerId)}|${at}|${JSON.stringify(props)}`;
+  } catch {
+    return null; // a cyclic property bag falls back to always re-rendering
+  }
+}
+
 export function staleNote(props) {
   const ms = Number(props?.gevStaleForMs);
   const minutes = Number.isFinite(ms) ? Math.max(1, Math.round(ms / 60000)) : null;
@@ -271,7 +312,16 @@ export function renderPassiveMonitorDetail(record) {
   if (!layerId.startsWith(LAYER_PREFIX)) return false;
 
   const props = record?.properties || {};
+
+  // Identical re-selection after a layer poll: leave the panel exactly as it
+  // is, including any expanded response timeline. See `_renderedSignature`.
+  const signature = recordSignature(record, props);
+  if (signature && signature === _renderedSignature && _panel && !_panel.hidden) {
+    return true;
+  }
+
   const panel = ensurePanel();
+  _renderedSignature = signature;
 
   const severity = Number.isFinite(Number(props.severity)) ? Number(props.severity) : 0;
   const accent = SEVERITY_ACCENT[severity] || SEVERITY_ACCENT[0];
@@ -464,7 +514,14 @@ export function brigadeLineLabel(station) {
 export function clearBrigadeMarks() {
   const engine = _annotations();
   try {
-    return engine?.fadeOutGroup?.(BRIGADE_MARK_GROUP) ?? 0;
+    // Fade when the engine can, cut when it cannot. The fade only completes on
+    // a rendered frame — a backgrounded tab throttles those away — but it sets
+    // alpha to 0 immediately, so the marks are gone from view either way and
+    // the collection is tidied on the next frame.
+    if (typeof engine?.fadeOutGroup === 'function') {
+      return engine.fadeOutGroup(BRIGADE_MARK_GROUP);
+    }
+    return engine?.clearGroup?.(BRIGADE_MARK_GROUP) ?? 0;
   } catch {
     return 0; // the globe is not the answer; never let it break the panel
   }
@@ -795,6 +852,7 @@ export function hidePassiveMonitorDetail() {
   // clearest statement that the reader is done with it, and marks that outlive
   // their panel have nothing on screen left to explain them.
   clearBrigadeMarks();
+  _renderedSignature = null;
   if (!_panel) return;
   _panel.hidden = true;
   _panel.innerHTML = '';

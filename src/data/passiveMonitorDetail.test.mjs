@@ -4,6 +4,7 @@ import {
   _setBrigadeDepsForTest,
   clearBrigadeMarks,
   offersBrigadeAction,
+  recordSignature,
   showNearestBrigades,
 } from './passiveMonitorDetail.js';
 
@@ -457,4 +458,31 @@ test('a globe with no scoped-clear support never breaks the panel', async () => 
 
   _setBrigadeDepsForTest({ findNearest: async () => STATIONS, annotations: () => null });
   assert.equal(clearBrigadeMarks(), 0, 'and so is a missing engine');
+});
+
+test('the signature covers every property, not a hand-picked list', () => {
+  const record = { layerId: 'local-pm-incident' };
+  const a = recordSignature(record, { name: 'X', status: 'Responding' });
+  const b = recordSignature(record, { name: 'X', status: 'Under Control' });
+  const c = recordSignature(record, { name: 'X', status: 'Responding', gevStale: true });
+  assert.notEqual(a, b, 'a status change is a change');
+  assert.notEqual(a, c, 'so is a record becoming stale');
+  assert.equal(a, recordSignature(record, { name: 'X', status: 'Responding' }));
+  // A cyclic bag cannot be serialized; falling back to null means "always
+  // re-render", which is the safe direction.
+  const cyclic = {}; cyclic.self = cyclic;
+  assert.equal(recordSignature(record, cyclic), null);
+});
+
+test('a record that gains a position rebuilds, so the action can appear', () => {
+  // Warning EXTENT features can arrive without a usable centroid, and the
+  // brigade action is withheld until one exists. Position lives on the record,
+  // not in its properties, so a signature over properties alone would pin the
+  // buttonless first render forever.
+  const props = { hazard: 'incident', name: 'X' };
+  const without = recordSignature({ layerId: 'local-pm-incident' }, props);
+  const with_ = recordSignature({ layerId: 'local-pm-incident', latitude: -37.8, longitude: 145 }, props);
+  assert.notEqual(without, with_);
+  const moved = recordSignature({ layerId: 'local-pm-incident', latitude: -37.9, longitude: 145 }, props);
+  assert.notEqual(with_, moved, 'a record that moves is a change');
 });

@@ -9802,3 +9802,9 @@ body.scene-playback-mode #first-run-launcher {
   }
   .pm-detail-row { grid-template-columns: 84px 1fr; }
 }
+
+/* The clear-routes control sits under the response size, not with the primary
+   actions above the results — it acts on the globe, not on the panel. */
+.pm-detail-actions-inline {
+  margin-top: 8px;
+}

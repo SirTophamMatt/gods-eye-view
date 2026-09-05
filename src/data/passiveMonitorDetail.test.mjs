@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   _setBrigadeDepsForTest,
+  clearBrigadeMarks,
   offersBrigadeAction,
   showNearestBrigades,
 } from './passiveMonitorDetail.js';
@@ -88,13 +89,17 @@ test('the brigade action is offered for fire hazards and withheld from the rest'
 
 test('the action lists the stations and draws one line to each', async () => {
   const drawn = [];
+  const cleared = [];
   _setBrigadeDepsForTest({
     findNearest: async (origin, count) => {
       assert.deepEqual(origin, ORIGIN, 'the incident position is passed through');
       assert.equal(count, 3);
       return STATIONS;
     },
-    annotations: () => ({ annotate: (specs, opts) => drawn.push({ specs, opts }) }),
+    annotations: () => ({
+      annotate: (specs, opts) => drawn.push({ specs, opts }),
+      clearGroup: (group) => { cleared.push(group); return 0; },
+    }),
   });
 
   const panel = fakePanel();
@@ -128,7 +133,14 @@ test('the action lists the stations and draws one line to each', async () => {
   assert.equal(drawn.length, 1, 'one batched annotate call');
   const { specs, opts } = drawn[0];
   assert.equal(specs.length, 6, 'a pin and a route for each of the three stations');
-  assert.equal(opts.clearPrevious, true, 'a second incident must not leave the first ones up');
+  // A second incident must not leave the first one's lines up — but the old
+  // `clearPrevious: true` achieved that by wiping the WHOLE board, taking every
+  // mark the voice model had drawn with it. Scoped removal replaces it.
+  assert.equal(opts.clearPrevious, undefined, 'the board is no longer wiped wholesale');
+  assert.deepEqual(cleared, ['pm-brigade-response'], 'only this panel’s own group is dropped');
+  for (const spec of specs) {
+    assert.equal(spec.group, 'pm-brigade-response', 'every mark is tagged with its owner');
+  }
   for (let i = 0; i < STATIONS.length; i += 1) {
     const pin = specs[i * 2];
     const route = specs[(i * 2) + 1];
@@ -405,4 +417,44 @@ test('the list survives a host that cannot be queried for the chart', async () =
 
   assert.ok(panel.out.innerHTML.includes('Wendouree Fire Station'), 'the answer survives');
   assert.ok(!panel.out.innerHTML.includes('Station list unavailable'), 'and is not reported as a failure');
+});
+
+test('closing the panel takes this panel’s routes with it, and nothing else', async () => {
+  const faded = [];
+  _setBrigadeDepsForTest({
+    findNearest: async () => STATIONS,
+    inFrvArea: async () => false,
+    annotations: () => ({
+      annotate: () => {},
+      clearGroup: () => 0,
+      fadeOutGroup: (group) => { faded.push(group); return 2; },
+    }),
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+  assert.equal(clearBrigadeMarks(), 2, 'the panel can drop its own marks on demand');
+  assert.deepEqual(faded, ['pm-brigade-response']);
+
+  // Never fadeOutAll: the voice model's marks accumulate on purpose and are
+  // not this panel's to remove.
+  assert.ok(!faded.includes(undefined));
+});
+
+test('a globe with no scoped-clear support never breaks the panel', async () => {
+  // An older engine, or none at all. The list is the answer; the lines are the
+  // illustration, and the same trade applies to removing them.
+  _setBrigadeDepsForTest({
+    findNearest: async () => STATIONS,
+    inFrvArea: async () => false,
+    annotations: () => ({ annotate: () => {} }),
+  });
+
+  const panel = fakePanel();
+  await showNearestBrigades(panel, ORIGIN, panel.button);
+  assert.ok(panel.out.innerHTML.includes('Wendouree Fire Station'));
+  assert.equal(clearBrigadeMarks(), 0, 'a missing fadeOutGroup is a no-op, not a throw');
+
+  _setBrigadeDepsForTest({ findNearest: async () => STATIONS, annotations: () => null });
+  assert.equal(clearBrigadeMarks(), 0, 'and so is a missing engine');
 });

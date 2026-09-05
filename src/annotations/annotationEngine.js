@@ -695,6 +695,10 @@ export function createAnnotationEngine({
       type,
       color,
       label,
+      // Optional owner tag, so a caller can remove ITS marks without wiping
+      // the board. Absent on anything the voice model draws, which is what
+      // keeps `clearGroup` from ever touching a user's accumulated marks.
+      group: cleanGroup(spec?.group),
       createdAt: now,
       ttlMs: persist ? null : (Number(spec?.ttlMs) || DEFAULT_TTL_MS),
       alpha: 0, // animate in
@@ -757,6 +761,69 @@ export function createAnnotationEngine({
       // no ring exists yet.
       viewport: resolved.viewport || null,
     };
+  }
+
+  /** Normalize an owner tag; anything unusable is "no group". */
+  function cleanGroup(value) {
+    const text = typeof value === 'string' ? value.trim() : '';
+    return text ? text.slice(0, 64) : null;
+  }
+
+  /**
+   * Remove only the marks a given owner drew.
+   *
+   * The board is shared. The voice model's marks accumulate on purpose — the
+   * prompt tells it they persist across navigation so a user can build a map up
+   * — while the nearest-brigades action draws a set that belongs to one
+   * incident and should go when that incident does. Before this existed the
+   * only tool was the global `clear()`, so opening a fire silently wiped
+   * everything a user had drawn by voice.
+   *
+   * Deliberately does NOT bump `generation` or abort pending work: those are
+   * global, and cancelling an unrelated in-flight annotate() would be a worse
+   * side effect than the one this removes. A resolve already in flight for this
+   * group can therefore still land after the call; callers that care order
+   * their own work around it.
+   *
+   * @param {string} group Owner tag passed on the specs.
+   * @returns {number} How many marks were removed.
+   */
+  function clearGroup(group) {
+    const wanted = cleanGroup(group);
+    if (!wanted || !annotations.size) return 0;
+    let removed = 0;
+    for (const [id, anno] of annotations) {
+      if (anno.group !== wanted) continue;
+      renderer.remove(anno);
+      annotations.delete(id);
+      removed += 1;
+    }
+    if (removed) {
+      renderer.sync(annotations);
+      syncAnnotationHold();
+    }
+    return removed;
+  }
+
+  /**
+   * Begin a graceful fade-out of one owner's marks.
+   * @param {string} group Owner tag.
+   * @returns {number} How many marks were set fading.
+   */
+  function fadeOutGroup(group) {
+    const wanted = cleanGroup(group);
+    if (!wanted) return 0;
+    const now = performance.now();
+    let fading = 0;
+    for (const anno of annotations.values()) {
+      if (anno.group !== wanted) continue;
+      anno.expiring = true;
+      anno.ttlMs = 0;
+      anno.fadeStart = now;
+      fading += 1;
+    }
+    if (fading) ensureTicking();
+    return fading;
   }
 
   function clear() {
@@ -872,7 +939,9 @@ export function createAnnotationEngine({
   const engine = {
     annotate,
     clear,
+    clearGroup,
     fadeOutAll,
+    fadeOutGroup,
     count: () => annotations.size,
     list: () => Array.from(annotations.values()),
 

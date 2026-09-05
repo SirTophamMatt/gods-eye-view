@@ -66,6 +66,16 @@ const TIMELINE_TICK_MS = 10000;
 const MAX_DRAWN_BRIGADES = 10;
 
 /**
+ * Owner tag on every mark this panel draws.
+ *
+ * It is what lets the routes be removed on their own — when the reader asks,
+ * when a different incident is opened, or when the panel closes — without
+ * touching marks the voice model drew, which are documented as accumulating on
+ * purpose and would previously have been wiped along with them.
+ */
+const BRIGADE_MARK_GROUP = 'pm-brigade-response';
+
+/**
  * Severity accent, matching Passive Monitor's own warning palette
  * (app/modules/fire/data.py) so a level reads the same colour in both products.
  */
@@ -442,6 +452,24 @@ export function brigadeLineLabel(station) {
   return parts.join(' · ');
 }
 
+/**
+ * Fade this panel's brigade marks off the globe.
+ *
+ * Scoped to `BRIGADE_MARK_GROUP`, so a user's voice annotations survive it.
+ * Faded rather than cut so the lines leave the way they arrived; the engine
+ * removes them once the fade completes.
+ *
+ * @returns {number} How many marks were set fading.
+ */
+export function clearBrigadeMarks() {
+  const engine = _annotations();
+  try {
+    return engine?.fadeOutGroup?.(BRIGADE_MARK_GROUP) ?? 0;
+  } catch {
+    return 0; // the globe is not the answer; never let it break the panel
+  }
+}
+
 /** Stop the live marker. Safe to call when none is running. */
 function stopTimelineTicker() {
   if (_timelineTimer === null) return;
@@ -599,6 +627,9 @@ export async function showNearestBrigades(panel, origin, button, {
         Response timeline · ${stations.length} station${stations.length === 1 ? '' : 's'}
       </div>
       ${responseSizeControl(plans, activeId)}
+      <div class="pm-detail-actions pm-detail-actions-inline">
+        <button type="button" class="pm-detail-action" data-action="clear-routes">Clear routes</button>
+      </div>
       <div class="pm-detail-plan-note">${escapeHtml(plan.note)}</div>
       <div class="rt-legend">
         <span class="rt-key rt-key-sds">SDS turnout</span>
@@ -638,6 +669,15 @@ export async function showNearestBrigades(panel, origin, button, {
         incidentTime,
         planId: event.currentTarget.value,
       });
+    });
+
+    out.querySelector?.('[data-action="clear-routes"]')?.addEventListener('click', (event) => {
+      clearBrigadeMarks();
+      // The list stays. Only the globe is being tidied, and re-reading the
+      // table after clearing the lines is a normal thing to want.
+      const control = event.currentTarget;
+      control.disabled = true;
+      control.textContent = 'Routes cleared';
     });
 
     drawBrigadeMarks(origin, stations);
@@ -697,6 +737,10 @@ function drawBrigadeMarks(origin, stations) {
     // block of text with no fire visible under it. The panel keeps every
     // station; the globe shows the near end of the response, which is the part
     // a reader can still tell apart.
+    // Drop only OUR previous set. `clearPrevious: true` used to do this by
+    // wiping the whole board, which took every mark the user had drawn by
+    // voice with it — and those are documented as accumulating on purpose.
+    engine.clearGroup?.(BRIGADE_MARK_GROUP);
     engine.annotate(stations.slice(0, MAX_DRAWN_BRIGADES).flatMap((station) => ([
       {
         // A PIN at the station, carrying the whole label.
@@ -709,6 +753,7 @@ function drawBrigadeMarks(origin, stations) {
         // converge and you cannot tell which line belongs to which brigade.
         // The pin puts the name where the station actually is.
         type: 'pin',
+        group: BRIGADE_MARK_GROUP,
         color: 'green',
         latitude: station.latitude,
         longitude: station.longitude,
@@ -716,6 +761,7 @@ function drawBrigadeMarks(origin, stations) {
       },
       {
         type: 'route',
+        group: BRIGADE_MARK_GROUP,
         color: 'green',
         mode: 'car',
         // `metrics: false` suppresses the engine's own "— 4.2 km · 4 min
@@ -736,7 +782,7 @@ function drawBrigadeMarks(origin, stations) {
           { latitude: origin.latitude, longitude: origin.longitude },
         ],
       },
-    ])), { clearPrevious: true, persist: true });
+    ])), { persist: true });
   } catch {
     /* the panel already carries the answer */
   }
@@ -745,6 +791,10 @@ function drawBrigadeMarks(origin, stations) {
 /** Hide the panel and drop its contents. */
 export function hidePassiveMonitorDetail() {
   stopTimelineTicker();
+  // The routes belong to the record being read. Closing the panel is the
+  // clearest statement that the reader is done with it, and marks that outlive
+  // their panel have nothing on screen left to explain them.
+  clearBrigadeMarks();
   if (!_panel) return;
   _panel.hidden = true;
   _panel.innerHTML = '';

@@ -21,6 +21,7 @@ import {
 } from './cockpitTracking.js';
 import { IntelHUD } from './hud.js';
 import { startGoogleUsageMeter } from './data/googleUsageMeter.js';
+import { createMonitorMode, mountMonitorControl } from './monitor/monitorMode.js';
 import { ShareLinkManager } from './sharelink.js';
 import {
   isExplicitLayerStateOrigin,
@@ -2400,6 +2401,10 @@ export class StyleManager {
     // self-contained: it observes network timings, owns its own readout, and
     // no-ops where PerformanceObserver is missing.
     startGoogleUsageMeter();
+    // Monitor Mode: an unattended watch that flies from hazard to hazard.
+    // Off until switched on, and it yields the camera the moment it is touched.
+    this.monitorMode = createMonitorMode({ viewer });
+    mountMonitorControl(this.monitorMode);
     this._cockpitVisionMode = 'optical';
     this._cockpitVisionRestore = null;
     this._cockpitPanelRestore = null;

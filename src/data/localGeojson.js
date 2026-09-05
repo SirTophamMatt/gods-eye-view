@@ -20,6 +20,23 @@ import {
 /** Property carrying a feature's retention identity onto its entity. */
 const KEY_PROPERTY = 'gevKey';
 
+/**
+ * The first coordinate pair of any geometry, as a flat anchor.
+ * A polygon's first vertex is not its centroid; for a containment counter that
+ * only needs A point on the record, it is enough, and it is deterministic.
+ * @param {object} geometry GeoJSON geometry.
+ * @returns {[number, number]|null} [lon, lat], or null.
+ */
+function firstCoordinateOf(geometry) {
+  let node = geometry?.coordinates;
+  for (let depth = 0; depth < 5; depth += 1) {
+    if (!Array.isArray(node)) return null;
+    if (typeof node[0] === 'number' && typeof node[1] === 'number') return [node[0], node[1]];
+    node = node[0];
+  }
+  return null;
+}
+
 const DEFAULT_LABEL_MAX = 900;
 const DEFAULT_LABEL_GRID_PX = 132;
 const VISIBILITY_UPDATE_MS = 450;
@@ -379,6 +396,17 @@ export function createLocalGeoJsonLayer({
   let _count = 0;
   /** How many of `_count` are being held past their feed, not currently live. */
   let _retainedCount = 0;
+  /** Features this load saw for the first time; announced, then cleared. */
+  let _lastAdded = [];
+  /**
+   * The parsed GeoJSON this layer last built from.
+   *
+   * Kept as the FEATURES rather than rebuilt from Cesium entities. An entity
+   * knows its position but not its ring, and a warning area without its ring is
+   * useless to anything asking what is inside it — which is most of why the
+   * refresh is announced at all.
+   */
+  let _lastFeatures = [];
   /** @type {number|null} Timestamp of the last successful dataset load. */
   let _lastUpdate = null;
   /** @type {string|null} Short reason the bundled dataset failed to load. */
@@ -567,6 +595,7 @@ export function createLocalGeoJsonLayer({
           const reconciled = _retention.reconcile(features, Date.now());
           features = reconciled.features;
           _retainedCount = reconciled.retained;
+          _lastAdded = reconciled.added;
 
           // Stamp each feature with its retention identity so the entity built
           // from it can be found again after a refresh replaces the source —
@@ -577,6 +606,8 @@ export function createLocalGeoJsonLayer({
               properties: { ...(feature?.properties || {}), [KEY_PROPERTY]: featureKey(feature) },
             }));
           }
+
+          _lastFeatures = features;
 
           const geojson = {
             type: 'FeatureCollection',
@@ -963,6 +994,7 @@ export function createLocalGeoJsonLayer({
       // reading _enabled here (rather than forcing true) respects the toggle-off.
       if (_dataSource) _dataSource.show = _enabled;
       viewer.scene.requestRender?.();
+      announceRefresh();
     },
 
     disable: disableLayer,
@@ -990,6 +1022,64 @@ export function createLocalGeoJsonLayer({
       _error = null;
     }
   };
+
+  /**
+   * Tell anything watching what this layer now holds, and what just arrived.
+   *
+   * A DOM event rather than a callback threaded through the factory: eleven PM
+   * layers are constructed in `localLayers.js` from one shared config object,
+   * and adding a per-layer wire to each would be eleven edits for one listener.
+   * It follows the same pattern the context store already uses for selection.
+   *
+   * Only fires for layers that actually refresh. A bundled snapshot announces
+   * its one load and never speaks again, which is the truth about it.
+   */
+  function announceRefresh() {
+    const added = _lastAdded;
+    _lastAdded = [];
+    if (typeof window === 'undefined' || typeof CustomEvent !== 'function') return;
+    if (!(refreshMs > 0)) return;
+    try {
+      window.dispatchEvent(new CustomEvent('gev:layer-refreshed', {
+        detail: {
+          layerId: id,
+          layerName: name,
+          count: _count,
+          retained: _retainedCount,
+          error: _error,
+          added,
+          features: featureSnapshot(),
+        },
+      }));
+    } catch {
+      /* a listener throwing is not this layer's problem */
+    }
+  }
+
+  /**
+   * The layer's current features, annotated for the two kinds of consumer.
+   *
+   * They are the real GeoJSON — geometry intact — so a polygon can still be
+   * tested against and framed. `lat`/`lon` ride along because the containment
+   * counters read a flat coordinate pair, and deriving it here once beats every
+   * caller re-deriving it per record.
+   *
+   * @returns {object[]} Features with `lat`, `lon`, `key`, `layerId`, `name`.
+   */
+  function featureSnapshot() {
+    return _lastFeatures.map((feature) => {
+      const props = feature?.properties || {};
+      const at = firstCoordinateOf(feature?.geometry);
+      return {
+        ...feature,
+        key: props[KEY_PROPERTY] ?? null,
+        layerId: id,
+        name: props.name ?? null,
+        lat: at ? at[1] : null,
+        lon: at ? at[0] : null,
+      };
+    });
+  }
 
   /**
    * The retention key of whatever this layer currently has selected.

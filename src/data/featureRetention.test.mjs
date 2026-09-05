@@ -156,3 +156,50 @@ test('a malformed payload is tolerated rather than thrown on', () => {
   assert.equal(featureKey(null), 'k:||');
   assert.equal(featureKey({ properties: { hazard: 'incident', name: 'X' } }), 'k:incident|X|');
 });
+
+test('the first payload is a starting state, not a burst of arrivals', () => {
+  // Switching a layer on must not announce twenty-eight new incidents.
+  const tracker = createRetentionTracker({ retentionMs: TEN_MIN });
+  const first = tracker.reconcile([incident('A', 143.7, -38.7), incident('B', 145.1, -37.9)], 0);
+  assert.deepEqual(first.added, []);
+});
+
+test('a genuinely new feature is reported once, on the poll it appears in', () => {
+  const tracker = createRetentionTracker({ retentionMs: TEN_MIN });
+  const a = incident('A', 143.7, -38.7);
+  tracker.reconcile([a], 0);
+
+  const b = incident('B', 145.1, -37.9);
+  const second = tracker.reconcile([a, b], 120_000);
+  assert.equal(second.added.length, 1);
+  assert.equal(second.added[0].properties.name, 'B');
+
+  const third = tracker.reconcile([a, b], 240_000);
+  assert.deepEqual(third.added, [], 'it is not new twice');
+});
+
+test('a feature returning inside its grace period is not a new arrival', () => {
+  // It never stopped being held, so it never stopped being known. Announcing it
+  // again would turn one flaky poll into a phantom incident.
+  const tracker = createRetentionTracker({ retentionMs: TEN_MIN });
+  const a = incident('A', 143.7, -38.7);
+  tracker.reconcile([a], 0);
+  tracker.reconcile([], 60_000);
+  const back = tracker.reconcile([a], 120_000);
+  assert.deepEqual(back.added, []);
+});
+
+test('a feature returning AFTER its window closed is genuinely new again', () => {
+  const tracker = createRetentionTracker({ retentionMs: TEN_MIN });
+  const a = incident('A', 143.7, -38.7);
+  tracker.reconcile([a], 0);
+  tracker.reconcile([], TEN_MIN + 1000);      // dropped
+  const back = tracker.reconcile([a], TEN_MIN + 2000);
+  assert.equal(back.added.length, 1, 'the tracker had forgotten it, so it is an arrival');
+});
+
+test('retention off reports no arrivals, leaving snapshot layers untouched', () => {
+  const tracker = createRetentionTracker({ retentionMs: 0 });
+  assert.deepEqual(tracker.reconcile([incident('A', 143.7, -38.7)], 0).added, []);
+  assert.deepEqual(tracker.reconcile([incident('B', 145.1, -37.9)], 1000).added, []);
+});

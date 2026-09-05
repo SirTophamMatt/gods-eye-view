@@ -99,6 +99,16 @@ function firstCoordinate(geometry) {
 export function createRetentionTracker({ retentionMs = 0, keyOf = featureKey } = {}) {
   /** @type {Map<string, {feature: object, lastSeen: number}>} */
   const held = new Map();
+  /**
+   * Whether a payload has been seen at all yet.
+   *
+   * The FIRST reconcile is not a set of arrivals. Everything in it is new by
+   * definition — the tracker has seen nothing — and reporting twenty-eight
+   * "new incidents" the moment a layer is switched on would be both useless and
+   * alarming to anything watching for arrivals. So the first payload is
+   * absorbed silently and only later ones report additions.
+   */
+  let primed = false;
 
   return {
     /**
@@ -109,20 +119,27 @@ export function createRetentionTracker({ retentionMs = 0, keyOf = featureKey } =
      *
      * @param {object[]} features The payload, as parsed.
      * @param {number} now Clock, injected.
-     * @returns {{features: object[], live: number, retained: number, dropped: number}}
+     * @returns {{features: object[], live: number, retained: number, dropped: number, added: object[]}}
      */
     reconcile(features, now) {
       const incoming = Array.isArray(features) ? features : [];
       if (!(retentionMs > 0)) {
-        return { features: incoming, live: incoming.length, retained: 0, dropped: 0 };
+        return {
+          features: incoming, live: incoming.length, retained: 0, dropped: 0, added: [],
+        };
       }
 
       const seen = new Set();
+      const added = [];
       for (const feature of incoming) {
         const key = keyOf(feature);
         seen.add(key);
+        // New only if this tracker has never held it — and never on the first
+        // payload, which is a starting state rather than a set of arrivals.
+        if (primed && !held.has(key)) added.push(feature);
         held.set(key, { feature, lastSeen: now });
       }
+      primed = true;
 
       const retained = [];
       let dropped = 0;
@@ -142,14 +159,18 @@ export function createRetentionTracker({ retentionMs = 0, keyOf = featureKey } =
         live: incoming.length,
         retained: retained.length,
         dropped,
+        // Features present now that this tracker had never held. Empty on the
+        // first payload; empty for a feature returning from its grace period,
+        // which is a reappearance and not an arrival.
+        added,
       };
     },
 
     /** How many features are currently tracked, live or held. */
     size: () => held.size,
 
-    /** Forget everything. Used when a layer is destroyed. */
-    reset: () => held.clear(),
+    /** Forget everything, including that a payload was ever seen. */
+    reset: () => { held.clear(); primed = false; },
   };
 }
 

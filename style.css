@@ -9808,3 +9808,15 @@ body.scene-playback-mode #first-run-launcher {
 .pm-detail-actions-inline {
   margin-top: 8px;
 }
+
+/* Google Maps request counter. Dimmer than the imagery readouts above it: it
+   is housekeeping, not intelligence, and should never pull the eye first. */
+.hud-google-usage {
+  margin-top: 6px;
+  opacity: 0.5;
+  cursor: help;
+}
+
+.hud-google-usage:hover {
+  opacity: 0.85;
+}

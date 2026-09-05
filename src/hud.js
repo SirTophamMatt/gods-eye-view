@@ -184,6 +184,10 @@ export class IntelHUD {
           <div id="hud-gsd">GSD: --m  NIIRS: --</div>
           <div id="hud-alt">ALT: --m   SUN: --° EL</div>
           <div id="hud-ais-vessel" class="hud-ais-vessel">AIS: --</div>
+          <!-- Requests THIS BROWSER has made against the Google key today.
+               Not account usage — Google exposes none to a browser. The full
+               caveat rides on the element's title; see googleUsage.js. -->
+          <div id="hud-google-usage" class="hud-google-usage">MAPS: 0 TILES · 0 PLACES</div>
         </div>
         <div class="hud-bracket">┘</div>
       </div>

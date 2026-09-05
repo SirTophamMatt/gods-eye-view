@@ -20,6 +20,7 @@ import {
   enterCockpitWithTracking,
 } from './cockpitTracking.js';
 import { IntelHUD } from './hud.js';
+import { startGoogleUsageMeter } from './data/googleUsageMeter.js';
 import { ShareLinkManager } from './sharelink.js';
 import {
   isExplicitLayerStateOrigin,
@@ -2395,6 +2396,10 @@ export class StyleManager {
 
     // Intel HUD
     this.hud = new IntelHUD(viewer);
+    // Count what this browser spends against the Google key. Best-effort and
+    // self-contained: it observes network timings, owns its own readout, and
+    // no-ops where PerformanceObserver is missing.
+    startGoogleUsageMeter();
     this._cockpitVisionMode = 'optical';
     this._cockpitVisionRestore = null;
     this._cockpitPanelRestore = null;

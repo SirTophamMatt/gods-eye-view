@@ -215,6 +215,27 @@ function formatTimestamp(value) {
   return text(value);
 }
 
+/**
+ * The line shown on a record the feed has stopped listing.
+ *
+ * Says what is actually known — it was in an earlier poll and is not in the
+ * latest — and explicitly does NOT say the incident closed. The feed offers no
+ * way to tell a closed job from a missed poll, so claiming either would be
+ * inventing the half that matters.
+ *
+ * @param {object} props Unwrapped feature properties.
+ * @returns {string} Note text.
+ */
+export function staleNote(props) {
+  const ms = Number(props?.gevStaleForMs);
+  const minutes = Number.isFinite(ms) ? Math.max(1, Math.round(ms / 60000)) : null;
+  const since = minutes === null ? '' : ` for ${minutes} min`;
+  return `NOT IN LAST UPDATE — this record was in an earlier poll but not the`
+    + ` most recent one${since}. It may have closed, or the poll may have missed`
+    + ` it; the feed does not say which. It stops being drawn 10 min after it`
+    + ` was last seen.`;
+}
+
 function ensurePanel() {
   if (_panel && document.body.contains(_panel)) return _panel;
   const el = document.createElement('div');
@@ -310,6 +331,8 @@ export function renderPassiveMonitorDetail(record) {
           ${row('Position', coords)}
           ${row('Source', props.source)}
         </div>
+
+        ${props.gevStale ? `<p class="pm-detail-note pm-detail-stale">${escapeHtml(staleNote(props))}</p>` : ''}
 
         ${offersBrigadeAction(props, record) ? `
         <div class="pm-detail-actions">

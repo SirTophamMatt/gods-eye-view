@@ -9469,6 +9469,14 @@ body.scene-playback-mode #first-run-launcher {
   border-top: 1px solid var(--glass-border);
 }
 
+/* A held record — still drawn, no longer in the feed. Amber rather than the
+   severity red: it is a statement about our data, not an escalation. */
+.pm-detail-stale {
+  border-left: 2px solid #e6c700;
+  padding-left: 8px;
+  color: var(--text-primary);
+}
+
 /* ── Response timeline ────────────────────────────────────────────
    Two section colours, defined once here and read by the SVG through
    `var(--rt-*)`. Amber is the SDS block (waiting on a crew), blue is the Code 1

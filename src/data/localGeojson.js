@@ -10,6 +10,15 @@ import {
   setOverlayEntries,
   setOverlaySourceVisible,
 } from '../overlays/worldOverlay.js';
+import {
+  STALE_FOR_PROPERTY,
+  STALE_PROPERTY,
+  createRetentionTracker,
+  featureKey,
+} from './featureRetention.js';
+
+/** Property carrying a feature's retention identity onto its entity. */
+const KEY_PROPERTY = 'gevKey';
 
 const DEFAULT_LABEL_MAX = 900;
 const DEFAULT_LABEL_GRID_PX = 132;
@@ -125,6 +134,13 @@ export function localInfrastructureOverlayCopy(properties, layerId) {
     }
     const detail = firstClean([props.detail]);
     if (detail) details.push(clampCardLine(detail));
+    // A held record has to say so on the card itself. It is being drawn after
+    // its feed stopped listing it, and a reader looking at the globe has no
+    // other way to tell it apart from a current one.
+    if (props[STALE_PROPERTY]) {
+      const minutes = Math.max(1, Math.round(Number(props[STALE_FOR_PROPERTY] || 0) / 60000));
+      details.push(clampCardLine(`NOT IN LAST UPDATE · ${minutes} min`));
+    }
   }
 
   return { title, details };
@@ -336,6 +352,20 @@ export function createLocalGeoJsonLayer({
   source = 'Local JSONL',
   outlineOnly = false,
   styleFeature = null,
+  /**
+   * Re-fetch cadence, ms. 0 — the default, and every bundled snapshot — keeps
+   * the one-shot load this factory has always done: a file that ships with the
+   * build cannot change under a running session, so polling it is pure waste.
+   * Only a layer whose `url` is a LIVE endpoint has anything to gain.
+   */
+  refreshMs = 0,
+  /**
+   * How long a feature absent from a refresh is still drawn, ms. 0 disables
+   * retention, and the payload passes through untouched — see
+   * `featureRetention.js` for why a live hazard feed wants a grace period and
+   * a static snapshot does not.
+   */
+  retentionMs = 0,
   labels = true,
   labelMax = DEFAULT_LABEL_MAX,
   labelGridPx = DEFAULT_LABEL_GRID_PX,
@@ -347,6 +377,8 @@ export function createLocalGeoJsonLayer({
   let _enabled = false;
   let _clickHandler = null;
   let _count = 0;
+  /** How many of `_count` are being held past their feed, not currently live. */
+  let _retainedCount = 0;
   /** @type {number|null} Timestamp of the last successful dataset load. */
   let _lastUpdate = null;
   /** @type {string|null} Short reason the bundled dataset failed to load. */
@@ -357,6 +389,9 @@ export function createLocalGeoJsonLayer({
   let _stemGeometryDirty = true;
   let _lastVisibilityUpdate = 0;
   let _destroyed = false;
+  /** Guards against a slow poll stacking on the one before it. */
+  let _refreshing = false;
+  const _retention = createRetentionTracker({ retentionMs });
   let _groundRetryTimer = null;
   /** Consecutive self-armed retries since the last grounding/camera motion. */
   let _groundRetryArms = 0;
@@ -423,30 +458,37 @@ export function createLocalGeoJsonLayer({
     }
   };
 
-  return {
+  const api = {
     id,
     name,
     icon,
     source,
-    updateInterval: 0,
+    // The manager arms its own interval off this (see manager.js
+    // `_armUpdateLoop`); 0 keeps the stats-only tick a static layer wants.
+    updateInterval: refreshMs,
     statsRefreshInterval: 1000,
 
     init: async (viewer) => {
       // DataLayerManager calls this once
     },
-    
+
     update: async (viewer) => {
-      // DataLayerManager calls this when enabled
+      // Called on `updateInterval` while enabled. A no-op for the snapshot
+      // layers, which never set refreshMs.
+      await refreshLayer(viewer);
     },
-    
+
     /**
-     * @returns {{count:number, lastUpdate:number|null, error:string|null}}
+     * @returns {{count:number, retained:number, lastUpdate:number|null, error:string|null}}
      *   A dead layer must be distinguishable from an empty one: a failed load
      *   surfaces `error` (manager chip → UNAVAILABLE) instead of reporting a
-     *   silent zero count as nominal.
+     *   silent zero count as nominal. `retained` is how many of `count` are
+     *   being held past their feed rather than currently listed by it.
      */
     getStats: () => {
-      return { count: _count, lastUpdate: _lastUpdate, error: _error };
+      return {
+        count: _count, retained: _retainedCount, lastUpdate: _lastUpdate, error: _error,
+      };
     },
 
     enable: async (viewer) => {
@@ -517,6 +559,23 @@ export function createLocalGeoJsonLayer({
               .split('\n')
               .filter((l) => l.trim().length > 0)
               .map((line) => JSON.parse(line));
+          }
+
+          // Hold anything the feed has just dropped, for as long as the layer
+          // is configured to. A no-op at retentionMs 0, which is every bundled
+          // snapshot, so this cannot change how a static layer loads.
+          const reconciled = _retention.reconcile(features, Date.now());
+          features = reconciled.features;
+          _retainedCount = reconciled.retained;
+
+          // Stamp each feature with its retention identity so the entity built
+          // from it can be found again after a refresh replaces the source —
+          // which is what lets an open selection survive a poll.
+          if (retentionMs > 0 || refreshMs > 0) {
+            features = features.map((feature) => ({
+              ...feature,
+              properties: { ...(feature?.properties || {}), [KEY_PROPERTY]: featureKey(feature) },
+            }));
           }
 
           const geojson = {
@@ -922,13 +981,103 @@ export function createLocalGeoJsonLayer({
         viewer.dataSources.remove(_dataSource, true);
       }
       _overlayPublisher.destroy();
+      _retention.reset();
       _dataSource = null;
       _stemRecords = [];
       _count = 0;
+      _retainedCount = 0;
       _lastUpdate = null;
       _error = null;
     }
   };
+
+  /**
+   * The retention key of whatever this layer currently has selected.
+   *
+   * A refresh replaces every entity, so a selection held by object identity
+   * cannot survive it — and losing it would close an open detail panel every
+   * couple of minutes, which on a live incident is worse than not refreshing
+   * at all. The key is the only thing that persists across the swap.
+   *
+   * @param {object} viewer Cesium viewer.
+   * @returns {string|null} Key, or null when nothing of ours is selected.
+   */
+  function selectedRecordKey(viewer) {
+    const selected = viewer?.selectedEntity;
+    if (!selected || selected.__localLayerId !== id) return null;
+    try {
+      return selected.properties?.[KEY_PROPERTY]?.getValue?.() ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Re-select the entity carrying `key`, if the new payload still has one. */
+  function restoreSelection(viewer, key) {
+    if (!key || !viewer || !_dataSource) return;
+    for (const entity of _dataSource.entities.values) {
+      let entityKey = null;
+      try {
+        entityKey = entity.properties?.[KEY_PROPERTY]?.getValue?.() ?? null;
+      } catch {
+        entityKey = null;
+      }
+      if (entityKey !== key) continue;
+      viewer.selectedEntity = entity;
+      selectEntityContext(entity);
+      return;
+    }
+    // Gone for good — the feed dropped it and its retention window closed.
+    // Leave the selection cleared rather than picking a neighbour.
+    clearSelectedEntityContextForLayer(id);
+  }
+
+  /**
+   * Re-fetch and rebuild, keeping the old data on screen until the new data is
+   * ready to replace it.
+   *
+   * The swap is a double-buffer, not a teardown-and-reload: `enable()` already
+   * builds into a local and commits to `_dataSource` only once setup finishes,
+   * so nulling the handle sends it down the build path while the PREVIOUS
+   * source stays in the scene, visible, the whole time. Removing the old one
+   * afterwards is what makes a refresh a single-frame swap instead of a gap.
+   *
+   * A failed poll keeps the last good data. The alternative — emptying the
+   * layer because one fetch timed out — turns a network blip into "there are
+   * no incidents", which is the most dangerous thing this layer could say.
+   *
+   * @param {object} viewer Cesium viewer.
+   */
+  async function refreshLayer(viewer) {
+    if (_destroyed || !_enabled || !(refreshMs > 0) || !viewer) return;
+    // A poll slower than the interval must not stack; the manager's timer does
+    // not await us.
+    if (_refreshing) return;
+    _refreshing = true;
+
+    const previous = _dataSource;
+    const previousCount = _count;
+    const selectedKey = selectedRecordKey(viewer);
+
+    try {
+      _dataSource = null;
+      await api.enable(viewer);
+
+      if (_dataSource && previous && _dataSource !== previous) {
+        try { viewer.dataSources.remove(previous, true); } catch { /* already gone */ }
+      } else if (!_dataSource && previous) {
+        // enable() reported the failure and rolled its own partial build back.
+        // Put the last good source back so the layer keeps showing it.
+        _dataSource = previous;
+        _count = previousCount;
+      }
+      restoreSelection(viewer, selectedKey);
+    } finally {
+      _refreshing = false;
+    }
+  }
+
+  return api;
 }
 
 function compareLocalOverlayRecords(a, b) {

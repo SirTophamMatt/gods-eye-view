@@ -106,6 +106,29 @@ const PM_LIVE = Boolean(import.meta.env.PASSIVE_MONITOR_LIVE);
 const PM_SOURCE_LABEL = PM_LIVE ? 'Passive Monitor · LIVE' : 'Passive Monitor';
 
 /**
+ * Live-refresh policy for the Passive Monitor hazard layers.
+ *
+ * APPLIED ONLY WHEN LIVE. Against the committed snapshots these would be
+ * pure waste: a bundled asset cannot change under a running session, so
+ * re-fetching it every two minutes buys nothing and a retention window has
+ * nothing to retain.
+ *
+ * TWO MINUTES because that is the cadence the data actually moves at.
+ * Passive Monitor's collectors run on their own schedule and the proxy
+ * caches for 30 s (see the Cache-Control it sets), so polling harder just
+ * re-serves the same bytes.
+ *
+ * TEN MINUTES of retention because an incident vanishing from the feed has
+ * two very different causes — it closed, or the poll missed it — and the feed
+ * never says which. Holding it, marked, for ten minutes rides out a bad poll
+ * without ever asserting that a closed job is still running: the card reads
+ * NOT IN LAST UPDATE from the first refresh that misses it.
+ */
+const PM_LIVE_POLICY = PM_LIVE
+  ? Object.freeze({ refreshMs: 120_000, retentionMs: 600_000 })
+  : Object.freeze({});
+
+/**
  * Passive Monitor hazard layers.
  *
  * Separate layers rather than one combined feed: the operational question is
@@ -126,6 +149,7 @@ const PM_SOURCE_LABEL = PM_LIVE ? 'Passive Monitor · LIVE' : 'Passive Monitor';
  */
 const passiveMonitorWarnEmergency = createLocalGeoJsonLayer({
   id: 'local-pm-warn-emergency',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-warn-emergency', pmWarnEmergencyUrl),
   name: 'PM Emergency Warnings',
   color: '#d62728', // PM WARNING_STYLE: Emergency Warning
@@ -138,6 +162,7 @@ const passiveMonitorWarnEmergency = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnWatch = createLocalGeoJsonLayer({
   id: 'local-pm-warn-watch',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-warn-watch', pmWarnWatchUrl),
   name: 'PM Watch & Act',
   color: '#ff7f0e', // PM WARNING_STYLE: Watch and Act
@@ -150,6 +175,7 @@ const passiveMonitorWarnWatch = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnAdvice = createLocalGeoJsonLayer({
   id: 'local-pm-warn-advice',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-warn-advice', pmWarnAdviceUrl),
   name: 'PM Advice',
   color: '#e6c700', // PM WARNING_STYLE: Advice
@@ -162,6 +188,7 @@ const passiveMonitorWarnAdvice = createLocalGeoJsonLayer({
 
 const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
   id: 'local-pm-warn-community',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-warn-community', pmWarnCommunityUrl),
   name: 'PM Community Info',
   color: '#9aa0a6', // PM classify() fallback grey — no styled level upstream
@@ -192,6 +219,7 @@ const passiveMonitorWarnCommunity = createLocalGeoJsonLayer({
  */
 const passiveMonitorWeatherWarning = createLocalGeoJsonLayer({
   id: 'local-pm-weather-warning',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-weather-warning', pmWeatherWarningUrl),
   name: 'PM Weather Warnings',
   color: '#00b7ff',
@@ -207,6 +235,7 @@ const passiveMonitorWeatherWarning = createLocalGeoJsonLayer({
 // yellow ladder rather than competing with it for the same hues.
 const passiveMonitorIncident = createLocalGeoJsonLayer({
   id: 'local-pm-incident',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-incident', pmIncidentUrl),
   name: 'PM Incidents',
   color: '#00d1b2',
@@ -219,6 +248,7 @@ const passiveMonitorIncident = createLocalGeoJsonLayer({
 
 const passiveMonitorBurn = createLocalGeoJsonLayer({
   id: 'local-pm-burn',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-burn', pmBurnUrl),
   name: 'PM Burn Areas',
   color: '#8b5a2b',
@@ -237,6 +267,7 @@ const passiveMonitorBurn = createLocalGeoJsonLayer({
  */
 const passiveMonitorRoads = createLocalGeoJsonLayer({
   id: 'local-pm-roads',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-roads', pmRoadsUrl),
   name: 'PM Road Disruptions',
   color: '#ff6b9d',
@@ -285,6 +316,7 @@ function floodGaugeStyle(props) {
 
 const passiveMonitorFlood = createLocalGeoJsonLayer({
   id: 'local-pm-flood',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-flood', pmFloodUrl),
   name: 'PM Flood Gauges',
   color: '#2ea8ff', // Water blue — the layer chip and the below-flood majority
@@ -301,6 +333,7 @@ const passiveMonitorFlood = createLocalGeoJsonLayer({
 
 const passiveMonitorStorm = createLocalGeoJsonLayer({
   id: 'local-pm-storm',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-storm', pmStormUrl),
   name: 'PM Storm Cells',
   color: '#b45cff', // Radar violet
@@ -313,6 +346,7 @@ const passiveMonitorStorm = createLocalGeoJsonLayer({
 
 const passiveMonitorPower = createLocalGeoJsonLayer({
   id: 'local-pm-power',
+  ...PM_LIVE_POLICY,
   url: passiveMonitorSource('pm-power', pmPowerUrl),
   name: 'PM Power Outages',
   color: '#ffc61a', // Supply yellow

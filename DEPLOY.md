@@ -281,6 +281,16 @@ client never learns where the instance lives or how to authenticate to it.
 
 Two behaviours worth knowing:
 
+- **Live layers poll; snapshot layers do not.** Pointed at an instance, each PM
+  layer re-fetches every **2 minutes** and holds a record that drops out of the
+  feed for a further **10 minutes** before it stops being drawn. A held record is
+  marked `NOT IN LAST UPDATE` on its globe card and carries a full explanation in
+  the detail panel — a feed dropping a record means either "it closed" or "the
+  poll missed it", and the feed never says which, so neither is asserted. The
+  policy lives in `PM_LIVE_POLICY` (`src/data/localLayers.js`) and applies only
+  when live: a snapshot committed to the build cannot change under a running
+  session, so polling it would be pure waste. A failed poll keeps the last good
+  data on screen rather than emptying the layer.
 - **There is no automatic fallback to the snapshots.** If the instance is
   unreachable the layers report an error. Silently serving hours-old hazard data
   as though it were current is the worse failure.

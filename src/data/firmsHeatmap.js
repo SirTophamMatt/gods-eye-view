@@ -422,7 +422,11 @@ export function createFirmsHeatmapLayer({
     _loading = true;
 
     try {
-      const response = await fetch(FIRMS_API_URL, { cache: 'no-store' });
+      // 'no-cache', not 'no-store': the browser still revalidates on every
+      // poll, but it keeps the body and sends If-None-Match, so an unchanged
+      // proxy payload comes back 304 with no bytes instead of another ~15 MB.
+      // 'no-store' would discard the body and make every poll a full download.
+      const response = await fetch(FIRMS_API_URL, { cache: 'no-cache' });
       if (!response.ok) {
         let payload = null;
         try {

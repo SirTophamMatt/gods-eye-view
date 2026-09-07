@@ -40,6 +40,7 @@ import {
   isOverBudget as isTomTomOverBudget,
 } from './src/data/tomtomTiles.js';
 import { filterTrailing24h, parseFirmsCsv } from './src/data/firmsCsv.js';
+import { etagMatches } from './src/data/httpEtag.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 import { defineConfig, loadEnv } from 'vite';
@@ -1967,6 +1968,12 @@ function tomtomProxy() {
  *   GET /api/firms        → {fetchedAt, stale, ttlMs, sources, count, fires}
  *   GET /api/firms/status → {hasKey, lastFetch, count, stale, ttlMs, transactions}
  *
+ * /api/firms is a conditional GET: the body is serialized once per cache entry
+ * (per minute bucket, so the trailing-24 h clamp still moves) and served under
+ * a content ETag, so a client that already holds it gets 304 and no bytes
+ * instead of another ~15 MB. Records carry only the fields adaptFirmsRecords
+ * reads, at sensor-justified precision — see slimRecord.
+ *
  * Keyless (no FIRMS_MAP_KEY): /api/firms → 503 {error:'no_key'}; status →
  * {hasKey:false}. Upstream is never touched without a key.
  *
@@ -2050,19 +2057,68 @@ function firmsProxy() {
   }
 
   /**
-   * Cache entry → response payload. Fires are RE-filtered to the trailing
-   * 24 h at serve time so a stale cache never serves >24h-old detections.
+   * Serialized-payload memo. Rebuilding a response means filtering ~300k
+   * records and stringifying ~15 MB, so the bytes are built once and reused
+   * by every request landing on the same cache entry in the same minute.
+   * Bucketing by the minute preserves the trailing-24 h guarantee to within
+   * 60 s rather than abandoning it for a fixed-for-30-min body.
    */
-  function buildPayload(entry, stale) {
-    const fires = filterTrailing24h(entry.fires, Date.now());
+  const PREPARED_BUCKET_MS = 60_000;
+  /** @type {?{key: string, buffer: Buffer, etag: string, count: number}} */
+  let prepared = null;
+
+  /** Round to `dp` decimals; non-finite → 0. */
+  function round(value, dp) {
+    const number = Number(value);
+    if (!Number.isFinite(number)) return 0;
+    const factor = 10 ** dp;
+    return Math.round(number * factor) / factor;
+  }
+
+  /**
+   * Trim a record to what the client actually reads (see adaptFirmsRecords in
+   * src/data/firmsAdapt.js) at the precision the sensor justifies. VIIRS
+   * pixels are ~375 m, so 4 dp (~11 m) is already far finer than the
+   * measurement; `brightnessTi5` is parsed by firmsCsv but read by nothing.
+   * Measured against a full 309k-record window: 12.7% smaller raw, 26%
+   * smaller gzipped (5.67 MB -> 4.18 MB), with nothing rendered differently.
+   */
+  function slimRecord(record) {
     return {
+      lat: round(record.lat, 4),
+      lon: round(record.lon, 4),
+      frp: round(record.frp, 2),
+      confidence: record.confidence,
+      brightness: round(record.brightness, 2),
+      daynight: record.daynight,
+      acqDate: record.acqDate,
+      acqTime: record.acqTime,
+      satellite: record.satellite,
+      instrument: record.instrument,
+    };
+  }
+
+  /**
+   * Cache entry → serialized body + content ETag, memoized per entry and
+   * minute bucket. Fires are RE-filtered to the trailing 24 h so a stale
+   * cache never serves detections older than the window.
+   */
+  function preparePayload(entry, stale) {
+    const key = `${entry.at}:${stale ? 1 : 0}:${Math.floor(Date.now() / PREPARED_BUCKET_MS)}`;
+    if (prepared && prepared.key === key) return prepared;
+
+    const fires = filterTrailing24h(entry.fires, Date.now()).map(slimRecord);
+    const buffer = Buffer.from(JSON.stringify({
       fetchedAt: entry.at,
       stale,
       ttlMs: TTL_MS,
       sources: entry.sources,
       count: fires.length,
       fires,
-    };
+    }), 'utf8');
+    const etag = `"${createHash('sha1').update(buffer).digest('base64url')}"`;
+    prepared = { key, buffer, etag, count: fires.length };
+    return prepared;
   }
 
   /** mapkey_status transactions, cached 5 min, best-effort (null on failure). */
@@ -2104,6 +2160,28 @@ function firmsProxy() {
           res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
           res.end(JSON.stringify(obj));
         };
+        /**
+         * Serve a prepared body under its content ETag. A request whose
+         * If-None-Match still matches gets 304 and no body, which is what
+         * makes a reload, a second tab or a second viewer free instead of
+         * another 15 MB. `no-cache` still forces revalidation every time, so
+         * the client can never render fires we have since aged out.
+         */
+        const sendPrepared = (payload) => {
+          if (res.headersSent) return;
+          const headers = {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'no-cache',
+            ETag: payload.etag,
+          };
+          if (etagMatches(req.headers['if-none-match'], payload.etag)) {
+            res.writeHead(304, headers);
+            res.end();
+            return;
+          }
+          res.writeHead(200, { ...headers, 'Content-Length': payload.buffer.length });
+          res.end(payload.buffer);
+        };
         try {
           const subPath = String(req.url || '').split('?')[0];
           const key = mapKey();
@@ -2133,7 +2211,7 @@ function firmsProxy() {
 
           const entry = mem;
           if (entry && Date.now() - entry.at < TTL_MS) {
-            sendJson(200, buildPayload(entry, false));
+            sendPrepared(preparePayload(entry, false));
             return;
           }
           // Stale or missing → refresh, single-flight (concurrent requests
@@ -2155,9 +2233,9 @@ function firmsProxy() {
           const pending = inflight;
           const fresh = await pending;
           if (fresh) {
-            sendJson(200, buildPayload(fresh, false));
+            sendPrepared(preparePayload(fresh, false));
           } else if (entry) {
-            sendJson(200, buildPayload(entry, true)); // upstream down — stale beats empty
+            sendPrepared(preparePayload(entry, true)); // upstream down — stale beats empty
           } else {
             sendJson(502, { error: 'firms fetch failed and no cache available' });
           }

@@ -43,6 +43,81 @@ export function isLikelyCsv(text) {
 }
 
 /**
+ * Split a CSV payload into header metadata plus body lines.
+ *
+ * Shared by {@link parseFirmsCsv} and {@link parseFirmsCsvChunked} so the two
+ * cannot drift on which columns they read. Builds a column index by NAME, so
+ * the parser survives column reordering across FIRMS product versions.
+ *
+ * @param {string} text - Raw CSV payload.
+ * @returns {?{lines: string[], headerIndex: number, width: number, columns: Object}}
+ *   Header metadata, or null for non-CSV input.
+ */
+function readCsvHeader(text) {
+  if (!isLikelyCsv(text)) return null;
+  const lines = text.split('\n');
+
+  let headerIndex = 0;
+  while (headerIndex < lines.length && !lines[headerIndex].trim()) headerIndex += 1;
+  const header = lines[headerIndex].trim().toLowerCase().split(',').map((f) => f.trim());
+  const col = new Map(header.map((name, i) => [name, i]));
+
+  return {
+    lines,
+    headerIndex,
+    width: header.length,
+    columns: {
+      lat: col.get('latitude'),
+      lon: col.get('longitude'),
+      frp: col.get('frp'),
+      confidence: col.get('confidence'),
+      brightness: col.get('bright_ti4') ?? col.get('brightness'),
+      brightnessTi5: col.get('bright_ti5') ?? col.get('bright_t31'),
+      daynight: col.get('daynight'),
+      acqDate: col.get('acq_date'),
+      acqTime: col.get('acq_time'),
+      satellite: col.get('satellite'),
+      instrument: col.get('instrument'),
+    },
+  };
+}
+
+/**
+ * One CSV body line → a detection record, or null when the row is unusable
+ * (blank, short, or without finite coordinates).
+ *
+ * @param {string} line - Raw body line.
+ * @param {number} width - Header column count; shorter rows are malformed.
+ * @param {Object} columns - Column index from {@link readCsvHeader}.
+ * @returns {?Object} Detection record, or null to skip the row.
+ */
+function parseRow(line, width, columns) {
+  const trimmed = line.trim();
+  if (!trimmed) return null;
+  const parts = trimmed.split(',');
+  if (parts.length < width) return null; // malformed row — skip
+  const lat = Number(parts[columns.lat]);
+  const lon = Number(parts[columns.lon]);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+  return {
+    lat,
+    lon,
+    frp: finiteOrZero(parts[columns.frp]),
+    // Categorical (l/n/h) or numeric — passed through raw; display
+    // normalization happens client-side (normalizeConfidence).
+    confidence: cell(parts, columns.confidence),
+    brightness: finiteOrZero(parts[columns.brightness]),
+    brightnessTi5: finiteOrZero(parts[columns.brightnessTi5]),
+    daynight: cell(parts, columns.daynight),
+    acqDate: cell(parts, columns.acqDate),
+    acqTime: cell(parts, columns.acqTime), // NOT zero-padded — kept verbatim
+    satellite: cell(parts, columns.satellite),
+    instrument: cell(parts, columns.instrument),
+  };
+}
+
+/**
  * Parse a FIRMS area CSV payload into flat detection records.
  *
  * Tolerates CRLF, trailing newlines, and malformed rows (skipped). A
@@ -50,60 +125,73 @@ export function isLikelyCsv(text) {
  * {@link isLikelyCsv}) returns `null` so callers can distinguish "no fires"
  * from "upstream failure".
  *
+ * A world-sized payload is ~85k rows and takes ~110 ms to parse, all of it in
+ * one uninterrupted run. Use {@link parseFirmsCsvChunked} on a shared event
+ * loop, where that lump would stall everything else the process is serving.
+ *
  * @param {string} text - Raw CSV payload.
  * @returns {?Array<{lat: number, lon: number, frp: number, confidence: string|number,
  *   brightness: number, brightnessTi5: number, daynight: string, acqDate: string,
  *   acqTime: string, satellite: string, instrument: string}>} Records, or null for non-CSV.
  */
 export function parseFirmsCsv(text) {
-  if (!isLikelyCsv(text)) return null;
-  const lines = text.split('\n');
-
-  // Locate the header (first non-empty line) and build a column index so the
-  // parser survives column reordering across FIRMS product versions.
-  let headerIndex = 0;
-  while (headerIndex < lines.length && !lines[headerIndex].trim()) headerIndex += 1;
-  const header = lines[headerIndex].trim().toLowerCase().split(',').map((f) => f.trim());
-  const col = new Map(header.map((name, i) => [name, i]));
-  const iLat = col.get('latitude');
-  const iLon = col.get('longitude');
-  const iFrp = col.get('frp');
-  const iConfidence = col.get('confidence');
-  const iBrightness = col.get('bright_ti4') ?? col.get('brightness');
-  const iBrightnessTi5 = col.get('bright_ti5') ?? col.get('bright_t31');
-  const iDaynight = col.get('daynight');
-  const iAcqDate = col.get('acq_date');
-  const iAcqTime = col.get('acq_time');
-  const iSatellite = col.get('satellite');
-  const iInstrument = col.get('instrument');
+  const csv = readCsvHeader(text);
+  if (!csv) return null;
 
   const records = [];
-  for (let i = headerIndex + 1; i < lines.length; i += 1) {
-    const line = lines[i].trim();
-    if (!line) continue;
-    const parts = line.split(',');
-    if (parts.length < header.length) continue; // malformed row — skip
-    const lat = Number(parts[iLat]);
-    const lon = Number(parts[iLon]);
-    if (!Number.isFinite(lat) || !Number.isFinite(lon)) continue;
-
-    records.push({
-      lat,
-      lon,
-      frp: finiteOrZero(parts[iFrp]),
-      // Categorical (l/n/h) or numeric — passed through raw; display
-      // normalization happens client-side (normalizeConfidence).
-      confidence: cell(parts, iConfidence),
-      brightness: finiteOrZero(parts[iBrightness]),
-      brightnessTi5: finiteOrZero(parts[iBrightnessTi5]),
-      daynight: cell(parts, iDaynight),
-      acqDate: cell(parts, iAcqDate),
-      acqTime: cell(parts, iAcqTime), // NOT zero-padded — kept verbatim
-      satellite: cell(parts, iSatellite),
-      instrument: cell(parts, iInstrument),
-    });
+  for (let i = csv.headerIndex + 1; i < csv.lines.length; i += 1) {
+    const record = parseRow(csv.lines[i], csv.width, csv.columns);
+    if (record) records.push(record);
   }
   return records;
+}
+
+/** Rows parsed between yields by {@link parseFirmsCsvChunked}. */
+export const DEFAULT_PARSE_CHUNK_ROWS = 5000;
+
+/**
+ * {@link parseFirmsCsv}, but yielding the event loop every `chunkRows` rows.
+ *
+ * Same input, same output — this exists purely so a big parse stops being one
+ * uninterruptible block. The FIRMS proxy runs inside the Vite dev server, which
+ * is the single-threaded process also compiling and serving every app module;
+ * a ~110 ms lump there (worse on a small VPS, and three sources back to back)
+ * is 110 ms during which no module request can be answered. Yielding turns
+ * that into slices the loop can interleave work between.
+ *
+ * `yieldControl` is injectable so tests can observe the yields without waiting
+ * on real timers. The default defers via `setTimeout(0)` rather than
+ * `setImmediate` to keep this module environment-neutral — it is imported by
+ * browser code as well as by vite.config.js.
+ *
+ * @param {string} text - Raw CSV payload.
+ * @param {{chunkRows?: number, yieldControl?: () => Promise<void>}} [options]
+ * @returns {Promise<?Array<Object>>} Records, or null for non-CSV.
+ */
+export async function parseFirmsCsvChunked(text, options = {}) {
+  const csv = readCsvHeader(text);
+  if (!csv) return null;
+
+  const chunkRows = Math.max(1, Math.floor(Number(options.chunkRows) || DEFAULT_PARSE_CHUNK_ROWS));
+  const pause = typeof options.yieldControl === 'function' ? options.yieldControl : deferToEventLoop;
+
+  const records = [];
+  let sinceYield = 0;
+  for (let i = csv.headerIndex + 1; i < csv.lines.length; i += 1) {
+    const record = parseRow(csv.lines[i], csv.width, csv.columns);
+    if (record) records.push(record);
+    sinceYield += 1;
+    if (sinceYield >= chunkRows) {
+      sinceYield = 0;
+      await pause();
+    }
+  }
+  return records;
+}
+
+/** Hand control back to the event loop once. */
+function deferToEventLoop() {
+  return new Promise((resolve) => { setTimeout(resolve, 0); });
 }
 
 /**

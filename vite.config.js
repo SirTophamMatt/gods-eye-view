@@ -39,7 +39,7 @@ import {
   normalizeBudget as normalizeTomTomBudget,
   isOverBudget as isTomTomOverBudget,
 } from './src/data/tomtomTiles.js';
-import { filterTrailing24h, parseFirmsCsv } from './src/data/firmsCsv.js';
+import { filterTrailing24h, parseFirmsCsvChunked } from './src/data/firmsCsv.js';
 import { etagMatches } from './src/data/httpEtag.js';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
@@ -1964,6 +1964,13 @@ function tomtomProxy() {
  * fresh-enough disk cache (.gev-cache/firms.json) prevents ANY upstream
  * fetch across dev-server restarts. Pattern mirrors celestrakProxy.
  *
+ * Past-TTL requests are stale-while-revalidate: the cached payload goes out
+ * immediately flagged stale and the refresh runs behind it. Only a genuinely
+ * cold proxy — no cache at all — waits on upstream, because only then is
+ * there nothing else to send. The parse is chunked for the same reason the
+ * wait is avoided: this runs inside the dev server that also serves every app
+ * module, and neither the fetch nor the parse may hold that thread.
+ *
  * Routes:
  *   GET /api/firms        → {fetchedAt, stale, ttlMs, sources, count, fires}
  *   GET /api/firms/status → {hasKey, lastFetch, count, stale, ttlMs, transactions}
@@ -2027,7 +2034,10 @@ function firmsProxy() {
     const url = `https://firms.modaps.eosdis.nasa.gov/api/area/csv/${encodeURIComponent(key)}/${source}/world/2`;
     const res = await fetch(url, { signal: AbortSignal.timeout(60_000) });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const records = parseFirmsCsv(await res.text());
+    // Chunked: a world payload is ~85k rows, and parsing it in one run would
+    // block the dev server — the same single thread that serves every app
+    // module — for the whole of it.
+    const records = await parseFirmsCsvChunked(await res.text());
     if (records === null) throw new Error('non-CSV upstream response');
     return records;
   }
@@ -2119,6 +2129,34 @@ function firmsProxy() {
     const etag = `"${createHash('sha1').update(buffer).digest('base64url')}"`;
     prepared = { key, buffer, etag, count: fires.length };
     return prepared;
+  }
+
+  /**
+   * Start (or join) the single-flight upstream refresh.
+   *
+   * Returns the in-flight promise so a cold caller can await it and a
+   * stale-but-served caller can simply drop it. It never rejects — failure
+   * resolves to null — so starting one without awaiting cannot raise an
+   * unhandled rejection.
+   *
+   * @param {string} key - FIRMS MAP_KEY.
+   * @returns {Promise<?{at: number, sources: Array<object>, fires: Array<object>}>}
+   */
+  function startRefresh(key) {
+    if (!inflight) {
+      inflight = refreshUpstream(key)
+        .then(async (fresh) => {
+          mem = fresh;
+          await writeDisk(fresh);
+          return fresh;
+        })
+        .catch((err) => {
+          console.warn(`[firms-proxy] refresh failed (${err?.message || err}) — serving cache if any`);
+          return null;
+        })
+        .finally(() => { inflight = null; });
+    }
+    return inflight;
   }
 
   /** mapkey_status transactions, cached 5 min, best-effort (null on failure). */
@@ -2214,28 +2252,22 @@ function firmsProxy() {
             sendPrepared(preparePayload(entry, false));
             return;
           }
-          // Stale or missing → refresh, single-flight (concurrent requests
-          // share one upstream pass). Capture the promise locally BEFORE
-          // awaiting: the .finally() nulls `inflight` the moment it settles.
-          if (!inflight) {
-            inflight = refreshUpstream(key)
-              .then(async (fresh) => {
-                mem = fresh;
-                await writeDisk(fresh);
-                return fresh;
-              })
-              .catch((err) => {
-                console.warn(`[firms-proxy] refresh failed (${err?.message || err}) — serving cache if any`);
-                return null;
-              })
-              .finally(() => { inflight = null; });
+          // Past TTL but we still hold data: answer from it NOW and let the
+          // refresh run behind the response. A refresh is three world CSVs
+          // fetched sequentially — measured at ~15 s against FIRMS from the
+          // VPS — and making a viewer wait that out for data we already have
+          // buys nothing. The payload goes out flagged stale, which is what
+          // the layer's own readout surfaces, so this is not a silent swap.
+          if (entry) {
+            startRefresh(key);
+            sendPrepared(preparePayload(entry, true));
+            return;
           }
-          const pending = inflight;
-          const fresh = await pending;
+          // Cold: nothing cached at all, so the wait is the only thing to
+          // serve. This is the one path that still blocks on upstream.
+          const fresh = await startRefresh(key);
           if (fresh) {
             sendPrepared(preparePayload(fresh, false));
-          } else if (entry) {
-            sendPrepared(preparePayload(entry, true)); // upstream down — stale beats empty
           } else {
             sendJson(502, { error: 'firms fetch failed and no cache available' });
           }

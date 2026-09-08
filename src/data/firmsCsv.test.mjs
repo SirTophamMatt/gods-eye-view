@@ -9,6 +9,8 @@ import {
   filterTrailing24h,
   isLikelyCsv,
   parseFirmsCsv,
+  parseFirmsCsvChunked,
+  DEFAULT_PARSE_CHUNK_ROWS,
 } from './firmsCsv.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -128,4 +130,69 @@ test('filterTrailing24h on the fixture keeps everything for a same-night now', (
   // 2026-07-17 02:00Z every detection is 4.5–16 h old — all inside 24 h.
   const kept = filterTrailing24h(records, Date.UTC(2026, 6, 17, 2, 0));
   assert.equal(kept.length, records.length);
+});
+
+test('parseFirmsCsvChunked returns exactly what parseFirmsCsv returns', async () => {
+  const sync = parseFirmsCsv(FIXTURE);
+  const chunked = await parseFirmsCsvChunked(FIXTURE, { chunkRows: 7 });
+  assert.deepEqual(chunked, sync);
+});
+
+test('parseFirmsCsvChunked yields once per chunk of rows', async () => {
+  let yields = 0;
+  const records = await parseFirmsCsvChunked(FIXTURE, {
+    chunkRows: 10,
+    yieldControl: () => { yields += 1; return Promise.resolve(); },
+  });
+  assert.equal(records.length, 45);
+  // 45 body rows at 10 per chunk: a yield after rows 10, 20, 30 and 40.
+  assert.equal(yields, 4);
+});
+
+test('parseFirmsCsvChunked with a chunk larger than the body never yields', async () => {
+  let yields = 0;
+  const records = await parseFirmsCsvChunked(FIXTURE, {
+    chunkRows: 10_000,
+    yieldControl: () => { yields += 1; return Promise.resolve(); },
+  });
+  assert.equal(records.length, 45);
+  assert.equal(yields, 0);
+});
+
+test('parseFirmsCsvChunked rejects non-CSV the same way as the sync parser', async () => {
+  assert.equal(await parseFirmsCsvChunked('<html>Invalid MAP_KEY</html>'), null);
+  assert.equal(await parseFirmsCsvChunked('Invalid MAP_KEY'), null);
+  assert.equal(parseFirmsCsv('<html>Invalid MAP_KEY</html>'), null);
+});
+
+test('parseFirmsCsvChunked on a header-only payload is an empty array', async () => {
+  assert.deepEqual(await parseFirmsCsvChunked(`${HEADER}\n`, { chunkRows: 2 }), []);
+});
+
+test('parseFirmsCsvChunked skips malformed rows like the sync parser', async () => {
+  const body = [
+    HEADER,
+    '1.5,2.5,300,0.4,0.36,2026-07-16,1210,N20,VIIRS,n,2.0NRT,290,5.5,D',
+    'not,enough,columns',
+    'abc,def,300,0.4,0.36,2026-07-16,1210,N20,VIIRS,n,2.0NRT,290,5.5,D',
+    '3.5,4.5,300,0.4,0.36,2026-07-16,1215,N20,VIIRS,h,2.0NRT,290,6.5,N',
+  ].join('\n');
+  const chunked = await parseFirmsCsvChunked(body, { chunkRows: 1 });
+  assert.deepEqual(chunked, parseFirmsCsv(body));
+  assert.equal(chunked.length, 2);
+});
+
+test('parseFirmsCsvChunked clamps a nonsense chunkRows instead of hanging', async () => {
+  for (const chunkRows of [0, -5, Number.NaN, undefined]) {
+    const records = await parseFirmsCsvChunked(FIXTURE, {
+      chunkRows,
+      yieldControl: () => Promise.resolve(),
+    });
+    assert.equal(records.length, 45, `chunkRows=${String(chunkRows)}`);
+  }
+});
+
+test('DEFAULT_PARSE_CHUNK_ROWS is a sane positive integer', () => {
+  assert.ok(Number.isInteger(DEFAULT_PARSE_CHUNK_ROWS));
+  assert.ok(DEFAULT_PARSE_CHUNK_ROWS > 0);
 });

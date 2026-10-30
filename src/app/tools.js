@@ -8,6 +8,7 @@ import { initGevVoiceCommands } from '../voice/gevRealtime.js';
 import { installViews, isEmbeddedInline } from './embed.js';
 import { installScopeMask, destroyScopeMask } from '../scopeMask.js';
 import { installLayerReleaseTrim } from '../sceneCommandRelease.js';
+import { installVicTools } from '../layers/vic/tools.js';
 import {
   installRenderGovernor,
   getRenderGovernorDiagnostics,
@@ -209,5 +210,7 @@ export function createApplicationTools({
       signal,
     }),
   );
+  // Fork: Victorian detail panel and Google usage readout.
+  defer(installVicTools());
   return { sceneDirector, annotations, voiceCommands };
 }

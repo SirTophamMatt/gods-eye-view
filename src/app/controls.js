@@ -1,6 +1,9 @@
 import { catalogControlServices } from './catalog.js';
 import { StyleManager } from '../ui/composition.js';
-import { flyToAustin } from '../camera.js';
+import {
+  DEFAULT_LOCATION,
+  flyToDefaultLocation,
+} from '../layers/vic/startView.js';
 import { initCockpitCloudEffects } from '../cockpitCloudEffects.js';
 import { t } from '../i18n/index.js';
 
@@ -47,10 +50,12 @@ export function createApplicationControls({
   });
   defer(() => cockpitCloudEffects?.destroy());
 
-  // If no share link state, do default fly-to Austin
+  // If no share link state, fly to the default location.
+  // Fork: Melbourne instead of upstream's Austin (src/layers/vic/startView.js).
   if (!styleManager.hasShareState) {
-    loaderStatus.textContent = t('Flying to Austin, TX...');
-    defer(flyToAustin(viewer));
+    // i18n-ignore: fork-only English loading text
+    loaderStatus.textContent = `Flying to ${DEFAULT_LOCATION.label}...`;
+    defer(flyToDefaultLocation(viewer));
   } else {
     loaderStatus.textContent = t('Restoring shared view...');
   }

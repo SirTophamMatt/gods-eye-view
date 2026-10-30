@@ -2636,7 +2636,23 @@
       "src/layers/vic/layerIds.js",
       "src/layers/vic/featureRetention.js",
       "src/layers/vic/geojsonLayer.js",
-      "src/layers/vic/catalog.js"
+      "src/layers/vic/catalog.js",
+      "src/layers/vic/startView.js",
+      "src/layers/vic/googleUsage.js",
+      "src/layers/vic/googleUsageMeter.js",
+      "src/layers/vic/nearestStations.js",
+      "src/layers/vic/floodGauge.js",
+      "src/layers/vic/code1Response.js",
+      "src/layers/vic/responsePlan.js",
+      "src/layers/vic/responseTimeline.js",
+      "src/layers/vic/stationAgency.js",
+      "src/layers/vic/turnoutStandard.js",
+      "src/layers/vic/pointInPolygon.js",
+      "src/layers/vic/snapshotUrls.js",
+      "src/layers/vic/fireStationLookup.js",
+      "src/layers/vic/brigadeResponse.js",
+      "src/layers/vic/detailPanel.js",
+      "src/layers/vic/tools.js"
     ],
     "external": [
       "hls.js",
@@ -3217,7 +3233,8 @@
       "src/data/geoFileImport.js",
       "src/layers/vic/featureRetention.js",
       "src/layers/vic/geojsonLayer.js",
-      "src/layers/vic/catalog.js"
+      "src/layers/vic/catalog.js",
+      "src/layers/vic/snapshotUrls.js"
     ],
     "external": [
       "hls.js",

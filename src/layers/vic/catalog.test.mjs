@@ -22,10 +22,10 @@ test('the catalog builds exactly the ids the panel and voice manifest name', () 
   );
 });
 
-test('every Victorian layer has a fork-range share token', () => {
+test('every Victorian layer has a 20-2i share token', () => {
   for (const id of VIC_LAYER_IDS) {
     assert.ok(REGISTERED_LAYER_IDS.includes(id), id);
-    assert.match(REGISTRY_BY_ID.get(id).token, /^z[0-9a-z]$/, id);
+    assert.match(REGISTRY_BY_ID.get(id).token, /^2[0-9a-i]$/, id);
   }
 });
 

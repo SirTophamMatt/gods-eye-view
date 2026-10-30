@@ -43,11 +43,11 @@ const reservationRows = JSON.parse(
     'utf8',
   ),
 );
-// Fork: the Victorian layers' fork-only z-range tokens (src/layers/vic/).
+// Fork: the Victorian layers' tokens, 20-2i (src/layers/vic/).
 const FORK_VIC_TOKENS = Object.freeze(
   Object.fromEntries(
     reservationRows.filter(
-      ([id, token]) => /^local-(pm|vicmap)-/.test(id) && /^z.$/.test(token),
+      ([id, token]) => /^local-(pm|vicmap)-/.test(id) && /^2.$/.test(token),
     ),
   ),
 );
@@ -136,7 +136,7 @@ test('reservation ledger is complete, pinned, and rejects duplicate or malformed
     { ...parseLayerStateTokenReservations(reservationRows) },
     { ...LAYER_STATE_TOKEN_RESERVATIONS },
   );
-  // Fork: 32 upstream + 19 Victorian layers in the fork-only z range.
+  // Fork: 32 upstream + 19 Victorian layers in the 20-2i range.
   assert.equal(Object.keys(LAYER_STATE_TOKEN_RESERVATIONS).length, 51);
   assert.deepEqual(
     { ...LAYER_STATE_TOKEN_RESERVATIONS },

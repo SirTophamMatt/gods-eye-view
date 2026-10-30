@@ -622,101 +622,103 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
     disposition: 'enabled-only',
   }),
   Object.freeze({ id: 'local-firms', token: 'w', disposition: 'enabled-only' }),
-  // Fork: Victorian layers (src/layers/vic/). Tokens use the fork-only z
-  // range so they can never collide with upstream allocations.
+  // Fork: Victorian layers (src/layers/vic/). Tokens 20-2i: low enough to keep
+  // compact share codes short (they are a bitset by token number), and about
+  // 76 allocations past upstream's next free token; a collision would fail the
+  // duplicate-token check at boot rather than pass silently.
   Object.freeze({
     id: 'local-pm-burn',
-    token: 'z0',
+    token: '20',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-flood',
-    token: 'z1',
+    token: '21',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-incident',
-    token: 'z2',
+    token: '22',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-power',
-    token: 'z3',
+    token: '23',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-roads',
-    token: 'z4',
+    token: '24',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-storm',
-    token: 'z5',
+    token: '25',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-warn-advice',
-    token: 'z6',
+    token: '26',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-warn-community',
-    token: 'z7',
+    token: '27',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-warn-emergency',
-    token: 'z8',
+    token: '28',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-warn-watch',
-    token: 'z9',
+    token: '29',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-pm-weather-warning',
-    token: 'za',
+    token: '2a',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-cfa-district',
-    token: 'zb',
+    token: '2b',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-cfa-tfb',
-    token: 'zc',
+    token: '2c',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-delwp-region',
-    token: 'zd',
+    token: '2d',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-emv-region',
-    token: 'ze',
+    token: '2e',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-fire-station',
-    token: 'zf',
+    token: '2f',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-frv-district',
-    token: 'zg',
+    token: '2g',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-frv-response',
-    token: 'zh',
+    token: '2h',
     disposition: 'enabled-only',
   }),
   Object.freeze({
     id: 'local-vicmap-lga',
-    token: 'zi',
+    token: '2i',
     disposition: 'enabled-only',
   }),
   Object.freeze({

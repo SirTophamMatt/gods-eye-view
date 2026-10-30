@@ -3,6 +3,7 @@ import test from 'node:test';
 import { APPLICATION_LAYER_METADATA } from '../app/constructCatalog.js';
 import { setLocale, t } from '../i18n/index.js';
 import { FEED_SOURCE, COMBINED_SOURCE } from '../layers/localAdsb/status.js';
+import { VIC_LAYER_IDS } from '../layers/vic/layerIds.js';
 import {
   LAYER_NAME_KEYS,
   PANEL_LABEL_KEYS,
@@ -10,8 +11,13 @@ import {
 } from './layerNames.js';
 
 // Layers whose module name is a proper name and stays as it is in every
-// language: the Bhote Koshi pair belong to a scripted scene.
-const UNTRANSLATED_NAMES = new Set(['bhote-koshi-2026', 'bhote-koshi-locator']);
+// language: the Bhote Koshi pair belong to a scripted scene. Fork: the
+// Victorian layers are deliberately English-only.
+const UNTRANSLATED_NAMES = new Set([
+  'bhote-koshi-2026',
+  'bhote-koshi-locator',
+  ...VIC_LAYER_IDS,
+]);
 
 const catalogIds = APPLICATION_LAYER_METADATA.map((layer) => layer.id);
 

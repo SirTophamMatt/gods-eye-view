@@ -1,0 +1,33 @@
+# God's Eye View on the shared VPS. Lives at /opt/gev/compose.yaml, one level
+# above the clone at /opt/gev/app, so the clone stays a pristine checkout.
+# See DEPLOY.md.
+#
+#   sudo -u gev git -C /opt/gev/app pull
+#   cd /opt/gev && docker compose up -d --build
+#
+# The image is upstream's Dockerfile (runs as the `node` user, copies the
+# source in, starts scripts/docker-start.mjs, carries its own Node-based
+# HEALTHCHECK). There is no bind mount: a pull needs the rebuild to show.
+services:
+  gods-eye-view:
+    build:
+      context: ./app
+    # What the Caddy `reverse_proxy` target names.
+    container_name: gods-eye-view
+    restart: unless-stopped
+    # Keys and settings. .env is excluded from the image, so this is the only
+    # way they arrive. It must set at least GOOGLE_MAPS_API_KEY,
+    # GEV_ALLOWED_HOSTS=<your domain> and GEV_KEY_SETUP_TRUSTED_PEERS=none.
+    env_file:
+      - ./app/.env
+    # Reachable from Caddy on the shared network and from nowhere else, so
+    # basicauth cannot be bypassed by hitting the port directly.
+    expose:
+      - '4173'
+    networks:
+      - web
+
+networks:
+  # Created by Passive Monitor's stack, whose Caddy fronts both projects.
+  web:
+    external: true

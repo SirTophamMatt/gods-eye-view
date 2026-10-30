@@ -448,6 +448,32 @@ export const DATA_CREDITS = [
       '(<a href="https://earthdata.nasa.gov/firms" target="_blank" rel="noopener">earthdata.nasa.gov/firms</a>), ' +
       'part of NASA’s Earth Observing System Data and Information System (EOSDIS)',
   },
+  // Fork: Victorian layers (src/layers/vic/). CC BY 4.0 is an attribution
+  // licence, so these credits are a condition of use; static because the
+  // snapshots ship with the build.
+  {
+    key: 'vicmap-admin',
+    html:
+      'Victorian administrative boundaries (LGA, CFA, FRV, DELWP, EMV): ' +
+      '<a href="https://discover.data.vic.gov.au/dataset/vicmap-admin-rest-api" target="_blank" rel="noopener">Vicmap Admin</a> ' +
+      '© State of Victoria (Department of Energy, Environment and Climate Action) ' +
+      '(CC BY 4.0)',
+  },
+  {
+    key: 'vicmap-foi',
+    html:
+      'Victorian fire stations: ' +
+      '<a href="https://discover.data.vic.gov.au/dataset/vicmap-features-of-interest-rest-api" target="_blank" rel="noopener">Vicmap Features of Interest</a> ' +
+      '© State of Victoria (Department of Energy, Environment and Climate Action) ' +
+      '(CC BY 4.0)',
+  },
+  {
+    key: 'passive-monitor',
+    html:
+      'Victorian hazards (warnings, incidents, flood gauges, storms, outages, roads): ' +
+      'Passive Monitor, aggregating VicEmergency, Bureau of Meteorology, ' +
+      'Victorian water agencies, distributors and VicTraffic',
+  },
   {
     key: 's2-ghostmaps',
     html:

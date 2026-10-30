@@ -622,6 +622,103 @@ export const LAYER_STATE_REGISTRY = Object.freeze([
     disposition: 'enabled-only',
   }),
   Object.freeze({ id: 'local-firms', token: 'w', disposition: 'enabled-only' }),
+  // Fork: Victorian layers (src/layers/vic/). Tokens use the fork-only z
+  // range so they can never collide with upstream allocations.
+  Object.freeze({
+    id: 'local-pm-burn',
+    token: 'z0',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-flood',
+    token: 'z1',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-incident',
+    token: 'z2',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-power',
+    token: 'z3',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-roads',
+    token: 'z4',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-storm',
+    token: 'z5',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-warn-advice',
+    token: 'z6',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-warn-community',
+    token: 'z7',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-warn-emergency',
+    token: 'z8',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-warn-watch',
+    token: 'z9',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-pm-weather-warning',
+    token: 'za',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-cfa-district',
+    token: 'zb',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-cfa-tfb',
+    token: 'zc',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-delwp-region',
+    token: 'zd',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-emv-region',
+    token: 'ze',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-fire-station',
+    token: 'zf',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-frv-district',
+    token: 'zg',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-frv-response',
+    token: 'zh',
+    disposition: 'enabled-only',
+  }),
+  Object.freeze({
+    id: 'local-vicmap-lga',
+    token: 'zi',
+    disposition: 'enabled-only',
+  }),
   Object.freeze({
     id: 'military',
     token: 'm',

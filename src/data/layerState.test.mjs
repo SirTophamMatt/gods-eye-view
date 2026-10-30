@@ -202,8 +202,9 @@ function encode(state) {
 
 test('production registry is exact, canonical, and rejects incomplete contracts', async () => {
   assert.equal(validateLayerStateRegistry(), true);
-  assert.equal(REGISTERED_LAYER_IDS.length, 32);
-  assert.equal(new Set(REGISTERED_LAYER_IDS).size, 32);
+  // Fork: 32 upstream + 19 Victorian layers.
+  assert.equal(REGISTERED_LAYER_IDS.length, 51);
+  assert.equal(new Set(REGISTERED_LAYER_IDS).size, 51);
   assert.ok(REGISTERED_LAYER_IDS.includes('transit'));
   assert.deepEqual(REGISTERED_LAYER_IDS, [...REGISTERED_LAYER_IDS].sort());
   assert.deepEqual(LEGACY_LAYER_STATE_TOKENS, {
@@ -2984,7 +2985,10 @@ test('Clear All cancels a saved restore still waiting to start', async () => {
   gate.resolve();
   const results = await restore;
   for (const id of ['earthquakes', 'flights']) {
-    assert.equal(results.find((result) => result.layerId === id).succeeded, false);
+    assert.equal(
+      results.find((result) => result.layerId === id).succeeded,
+      false,
+    );
   }
   assert.deepEqual([...manager.getEnabledLayerIds()], []);
   assert.equal(enabledLayerParam(sink), '');

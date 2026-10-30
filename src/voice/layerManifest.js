@@ -1,3 +1,5 @@
+import { VIC_LAYER_IDS } from '../layers/vic/layerIds.js';
+
 /**
  * Voice manifest for every data layer the application catalog constructs.
  *
@@ -424,6 +426,10 @@ const layers = [
 export const VOICE_OFF_LAYERS = Object.freeze({
   'bhote-koshi-2026': 'scene-driven event layer (control_scene)',
   'bhote-koshi-locator': 'scene-driven event layer (control_scene)',
+  // Fork: the Victorian layers are not exposed to voice.
+  ...Object.fromEntries(
+    VIC_LAYER_IDS.map((id) => [id, 'fork-only Victorian layer']),
+  ),
 });
 
 const TYPE_NAMES = Object.freeze({

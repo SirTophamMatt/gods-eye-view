@@ -91,6 +91,32 @@ const PANEL_GROUPS = [
     label: msg('Utilities'),
     ids: ['directions', 'radio'],
   },
+  // Fork: the Victorian layers, shown in English (src/layers/vic/).
+  {
+    // i18n-ignore: fork-only English group heading
+    label: 'Victoria',
+    ids: [
+      'local-pm-warn-emergency',
+      'local-pm-warn-watch',
+      'local-pm-warn-advice',
+      'local-pm-warn-community',
+      'local-pm-weather-warning',
+      'local-pm-incident',
+      'local-pm-burn',
+      'local-pm-flood',
+      'local-pm-storm',
+      'local-pm-power',
+      'local-pm-roads',
+      'local-vicmap-lga',
+      'local-vicmap-cfa-district',
+      'local-vicmap-cfa-tfb',
+      'local-vicmap-delwp-region',
+      'local-vicmap-emv-region',
+      'local-vicmap-frv-district',
+      'local-vicmap-frv-response',
+      'local-vicmap-fire-station',
+    ],
+  },
 ];
 const PANEL_ORDER = PANEL_GROUPS.flatMap(({ label, ids }) =>
   ids.map((id) => ({ id, label })),

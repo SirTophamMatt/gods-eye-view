@@ -360,7 +360,8 @@
       "src/voice/actionSchemas.js",
       "src/voice/layerManifest.js",
       "server/providers/openai/toolDescriptions.js",
-      "src/sources/rateLimit.js"
+      "src/sources/rateLimit.js",
+      "src/layers/vic/layerIds.js"
     ],
     "external": []
   },
@@ -1734,7 +1735,8 @@
       "src/voice/geminiCaptureWorklet.js",
       "src/sources/httpBody.js",
       "src/sources/requestDeadline.js",
-      "src/i18n/marker.js"
+      "src/i18n/marker.js",
+      "src/layers/vic/layerIds.js"
     ],
     "external": []
   },
@@ -2630,7 +2632,11 @@
       "src/voice/geminiCaptureWorklet.js",
       "src/ui/statusBadge.js",
       "src/sceneCommandRelease.js",
-      "src/scopeMaskPolicy.js"
+      "src/scopeMaskPolicy.js",
+      "src/layers/vic/layerIds.js",
+      "src/layers/vic/featureRetention.js",
+      "src/layers/vic/geojsonLayer.js",
+      "src/layers/vic/catalog.js"
     ],
     "external": [
       "hls.js",
@@ -3208,7 +3214,10 @@
       "src/layers/streetLevel/providers/mapillary/policy.js",
       "src/data/geoImportImages.js",
       "src/data/geoImportPins.js",
-      "src/data/geoFileImport.js"
+      "src/data/geoFileImport.js",
+      "src/layers/vic/featureRetention.js",
+      "src/layers/vic/geojsonLayer.js",
+      "src/layers/vic/catalog.js"
     ],
     "external": [
       "hls.js",
@@ -3510,7 +3519,8 @@
     "modules": [
       "src/voice/actionSchemas.js",
       "src/voice/layerManifest.js",
-      "src/hudLayoutPolicy.js"
+      "src/hudLayoutPolicy.js",
+      "src/layers/vic/layerIds.js"
     ],
     "external": []
   },
@@ -3543,7 +3553,8 @@
       "src/i18n/locales/zh-CN.json",
       "src/i18n/locales/zh-Hant.json",
       "src/ui/statusText.js",
-      "src/voice/providerCapabilities.js"
+      "src/voice/providerCapabilities.js",
+      "src/layers/vic/layerIds.js"
     ],
     "external": []
   },

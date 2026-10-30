@@ -1290,3 +1290,12 @@ function clampCardLine(value) {
 }
 
 export { mapAnalystRecord };
+// Fork: reused by the Victorian layer factory (src/layers/vic/geojsonLayer.js).
+export {
+  GROUND_SAMPLE_MAX_DISTANCE_M,
+  GROUND_SAMPLE_RETRY_MS,
+  propertyObject,
+  refreshLocalTerrainFloor,
+  sampleLocalGroundHeight,
+  updateLocalStemGeometry,
+};

@@ -422,7 +422,8 @@ export function findUnmarked() {
 
 // Text that never reaches the page as UI: tool results and descriptions for
 // AI clients (MCP and the voice model).
-const NOT_UI = [/^src\/tools\//];
+// Fork: the Victorian layers are deliberately English-only.
+const NOT_UI = [/^src\/tools\//, /^src\/layers\/vic\//];
 
 function sourceFiles() {
   return trackedFiles(

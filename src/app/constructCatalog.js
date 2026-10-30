@@ -34,6 +34,7 @@ import { createInfrastructureLayers } from '../data/infrastructure.js';
 import { localGeoJsonServices } from './localGeojsonServices.js';
 import { createBhoteKoshiEventLayer } from '../data/bhoteKoshiEvent.js';
 import { createBhoteKoshiLocatorLayer } from '../data/bhoteKoshiLocator.js';
+import { createVicLayers } from '../layers/vic/catalog.js';
 
 /**
  * Hardware-local layers are registered like any other but never enter share
@@ -178,6 +179,7 @@ export function createApplicationCatalog({
           source: 'NASA FIRMS · LIVE',
           feed: sources.firms,
         }),
+        ...createVicLayers(localGeoJsonServices),
       ],
       metadata,
     );

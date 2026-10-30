@@ -442,3 +442,45 @@ NOAA density imagery with the raw GLM product.
 ## In-app attribution
 
 The required Google Maps / Cesium credit renders on the on-globe credit line (`#cesium-credits`, bottom-left) and must stay visible — including in clean-view and recording modes (the whole line, logo + "Google Maps" + the "Data attribution" link, stays on screen; only the GEV panels/HUD fade). The layer-specific credits (adsb.lol, adsbdb, TeleGeography, OSM datacenters/dams/roads, NASA FIRMS, CelesTrak, USGS, City of Austin, Fintraffic, GBFS, Radio Browser, OpenSky, AISStream) are registered into the expandable **"Data attribution"** popover on that credit line via `viewer.creditDisplay.addStaticCredit(new Cesium.Credit(html, /* showOnScreen */ false))` — see `src/data/dataCredits.js`. When you add a new data source, add its license and attribution to this file **and** append an entry to `DATA_CREDITS` in `src/data/dataCredits.js` so it surfaces in the app.
+
+---
+
+## Fork additions: Victorian layers
+
+These sources belong to the SirTophamMatt fork (`src/layers/vic/`), not upstream.
+
+| Dataset | Folder | License | Redistributable? | Attribution |
+| --- | --- | --- | --- | --- |
+| **Vicmap fire stations** (1,705 stations — 1,288 VIC, 334 NSW, 81 SA border overlap) | `vicmap-emergency/` | **CC BY 4.0** | ✅ (attribution required) | "Vicmap Features of Interest © State of Victoria (DEECA)" |
+| **Vicmap Admin boundaries** (7 layers, 221 polygon parts: LGA, CFA district, CFA total fire ban district, DELWP region, EMV region, FRV district, FRV response area) | `vicmap-admin/` | **CC BY 4.0** | ✅ (attribution required) | "Vicmap Admin © State of Victoria (DEECA)" |
+| **Passive Monitor hazard snapshots** (warnings by level, BoM weather warnings, incidents, burn areas, flood gauges, storm cells, power outages, VicTraffic road disruptions) | `passive-monitor/` | Per upstream feed (VicEmergency, BoM, water agencies, distributors, VicTraffic) | Snapshots for local use | "Passive Monitor" |
+
+### Vicmap Admin boundaries (`vicmap-admin/`)
+
+`vicmap-admin/*.geojsonl` bundles seven administrative-boundary layers from **Vicmap Admin**
+([data.vic.gov.au dataset](https://discover.data.vic.gov.au/dataset/vicmap-admin-rest-api)),
+the State of Victoria's authoritative boundary product, published as a public ArcGIS
+FeatureServer at
+`https://services-ap1.arcgis.com/P744lA0wf4LlBZ84/arcgis/rest/services/Vicmap_Admin/FeatureServer`.
+They are the reference geometry the Passive Monitor hazard layers are implicitly issued
+against — a total fire ban is declared for a TFB district, a brigade responds inside a CFA
+district, a council runs the recovery in its LGA.
+
+The dataset is licensed **CC BY 4.0**, so attribution is a **condition of use**, not a
+courtesy: the credit is registered in `DATA_CREDITS` (`src/data/dataCredits.js`) as a
+static, always-on entry.
+
+Snapshots, not live. Boundaries are reference data that changes on the order of once a year
+(council amalgamation, ward redistribution), so a runtime dependency on a state ArcGIS
+instance on every page load buys nothing. Regenerate and commit with:
+
+```bash
+node scripts/export-vicmap-admin.mjs
+```
+
+That script records the full transform in its header: server-side generalisation at
+`maxAllowableOffset` 0.001° (~110 m), 5-decimal coordinate rounding, multipart splitting
+with per-part area-share label priority, and the mapping from raw Vicmap attributes onto
+the same `{name, status, detail}` property contract the Passive Monitor exporter emits.
+Retrieved 2026-09-03; upstream refreshes weekly.
+
